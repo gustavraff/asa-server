@@ -19,3 +19,4 @@ server-config.cmd.bak
 
 # Temporary state
 *.json
+.aider*
