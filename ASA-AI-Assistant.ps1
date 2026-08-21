@@ -6,9 +6,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Read-only AI proposal engine for ASA Manager.
-# This file NEVER writes Game.ini, GameUserSettings.ini, server-config.cmd, or any other server file.
-# It only asks local Ollama for structured setting proposals and validates them against this allow-list.
+# The Ollama/model path is proposal-only and never receives filesystem access.
+# Deterministic helpers below may apply only allow-listed settings to two fixed INI files.
 $script:AllowedSettings = [ordered]@{
     XPMultiplier                         = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=100.0; Note='Overall XP multiplier.' }
     HarvestAmountMultiplier              = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=100.0; Note='Resources gathered per hit.' }
@@ -91,32 +90,50 @@ function ConvertTo-AsaValidatedProposal {
 function Test-AsaAiApplyProposal {
     param([Parameter(Mandatory)]$Proposal)
 
-    if (-not $Proposal.Changes -or $Proposal.Changes.Count -eq 0) {
+    $proposalChanges = @($Proposal.Changes)
+    if ($proposalChanges.Count -eq 0) {
         return [pscustomobject]@{
             Success = $false
             Changes = @()
-            Error   = "Proposal must contain at least one change."
+            Error   = 'Proposal must contain at least one change.'
         }
     }
 
     $seenKeys = @{}
-    $changes = @()
-    $errors = @()
+    $changes = New-Object System.Collections.Generic.List[object]
+    $errors = New-Object System.Collections.Generic.List[string]
 
-    foreach ($change in $Proposal.Changes) {
-        $key = $change.Key
-        if ($seenKeys.ContainsKey($key)) {
-            $errors += "Duplicate key: ${key}"
+    foreach ($change in $proposalChanges) {
+        $key = [string]$change.Key
+        if ([string]::IsNullOrWhiteSpace($key)) {
+            $errors.Add('A proposed setting has no key.')
             continue
         }
 
+        if ($seenKeys.ContainsKey($key)) {
+            $errors.Add("Duplicate key: ${key}")
+            continue
+        }
+        $seenKeys[$key] = $true
+
         if (-not $script:AllowedSettings.Contains($key)) {
-            $errors += "Unknown or blocked setting: ${key}"
+            $errors.Add("Unknown or blocked setting: ${key}")
             continue
         }
 
         $meta = $script:AllowedSettings[$key]
-        $rawValue = $change.Value
+        $targetFile = [string]$meta.TargetFile
+        $section = [string]$meta.Section
+        $metadataAllowed = (
+            ($targetFile -ceq 'GameUserSettings.ini' -and $section -ceq '[ServerSettings]') -or
+            ($targetFile -ceq 'Game.ini' -and $section -ceq '[/Script/ShooterGame.ShooterGameMode]')
+        )
+        if (-not $metadataAllowed) {
+            $errors.Add("Blocked metadata for setting: ${key}")
+            continue
+        }
+
+        $rawValue = [string]$change.Value
         [decimal]$value = 0
         $parsed = [decimal]::TryParse(
             $rawValue,
@@ -126,37 +143,327 @@ function Test-AsaAiApplyProposal {
         )
 
         if (-not $parsed) {
-            $errors += "Invalid numeric value for ${key}: $rawValue"
+            $errors.Add("Invalid numeric value for ${key}: $rawValue")
             continue
         }
 
         if ($value -lt [decimal]$meta.Min -or $value -gt [decimal]$meta.Max) {
-            $errors += "Out-of-range value for ${key}: $value (allowed $($meta.Min)-$($meta.Max))"
+            $errors.Add("Out-of-range value for ${key}: $value (allowed $($meta.Min)-$($meta.Max))")
             continue
         }
 
-        $changes += [pscustomobject]@{
+        $changes.Add([pscustomobject]@{
             Key        = $key
             Value      = $value
-            TargetFile = $meta.TargetFile
-            Section    = $meta.Section
-        }
-
-        $seenKeys[$key] = $true
+            TargetFile = $targetFile
+            Section    = $section
+        })
     }
 
     if ($errors.Count -gt 0) {
         return [pscustomobject]@{
             Success = $false
             Changes = @()
-            Error   = ($errors -join "`n")
+            Error   = ($errors.ToArray() -join "`n")
         }
     }
 
     return [pscustomobject]@{
         Success = $true
-        Changes = $changes
-        Error   = ""
+        Changes = $changes.ToArray()
+        Error   = ''
+    }
+}
+
+function Set-AsaIniValueInMemory {
+    param(
+        [Parameter(Mandatory)][string[]]$Lines,
+        [Parameter(Mandatory)][string]$Section,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$Value
+    )
+
+    $copy = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $Lines) {
+        [void]$copy.Add([string]$line)
+    }
+
+    $sectionIndexes = New-Object System.Collections.Generic.List[int]
+    for ($i = 0; $i -lt $copy.Count; $i++) {
+        if ($copy[$i].Trim() -ieq $Section) {
+            $sectionIndexes.Add($i)
+        }
+    }
+
+    if ($sectionIndexes.Count -eq 0) {
+        throw "Required INI section not found: $Section"
+    }
+    if ($sectionIndexes.Count -gt 1) {
+        throw "Duplicate INI section is ambiguous: $Section"
+    }
+
+    $sectionIndex = $sectionIndexes[0]
+    $nextSectionIndex = $copy.Count
+    for ($i = $sectionIndex + 1; $i -lt $copy.Count; $i++) {
+        if ($copy[$i].Trim() -match '^\[[^\]]+\]$') {
+            $nextSectionIndex = $i
+            break
+        }
+    }
+
+    $keyPattern = '^\s*' + [regex]::Escape($Key) + '\s*='
+    $keyIndexes = New-Object System.Collections.Generic.List[int]
+    for ($i = $sectionIndex + 1; $i -lt $nextSectionIndex; $i++) {
+        if ($copy[$i] -match $keyPattern) {
+            $keyIndexes.Add($i)
+        }
+    }
+
+    if ($keyIndexes.Count -gt 1) {
+        throw "Duplicate INI key is ambiguous in ${Section}: $Key"
+    }
+
+    $replacement = $Key + '=' + $Value
+    if ($keyIndexes.Count -eq 1) {
+        $copy[$keyIndexes[0]] = $replacement
+    }
+    else {
+        $copy.Insert($nextSectionIndex, $replacement)
+    }
+
+    return [string[]]$copy.ToArray()
+}
+
+function Get-AsaAiFixedConfigPaths {
+    $configRoot = Join-Path $PSScriptRoot 'server\ShooterGame\Saved\Config\WindowsServer'
+    return [pscustomobject]@{
+        GameUserSettings = Join-Path $configRoot 'GameUserSettings.ini'
+        GameIni          = Join-Path $configRoot 'Game.ini'
+        BackupRoot       = Join-Path $PSScriptRoot 'backups\AI-Config'
+    }
+}
+
+function New-AsaAiPreparedApply {
+    param([Parameter(Mandatory)]$Proposal)
+
+    $validated = Test-AsaAiApplyProposal -Proposal $Proposal
+    if (-not $validated.Success) {
+        return [pscustomobject]@{
+            Success = $false
+            Error   = $validated.Error
+            Changes = @()
+        }
+    }
+
+    $paths = Get-AsaAiFixedConfigPaths
+    if (-not [IO.File]::Exists($paths.GameUserSettings) -or -not [IO.File]::Exists($paths.GameIni)) {
+        return [pscustomobject]@{
+            Success = $false
+            Error   = 'Both GameUserSettings.ini and Game.ini must exist before applying AI settings.'
+            Changes = @()
+        }
+    }
+
+    try {
+        [string[]]$gameUserLines = [IO.File]::ReadAllLines($paths.GameUserSettings)
+        [string[]]$gameIniLines = [IO.File]::ReadAllLines($paths.GameIni)
+        $writeGameUserSettings = $false
+        $writeGameIni = $false
+
+        foreach ($change in $validated.Changes) {
+            $valueText = ([decimal]$change.Value).ToString([Globalization.CultureInfo]::InvariantCulture)
+            if ($change.TargetFile -ceq 'GameUserSettings.ini') {
+                $gameUserLines = Set-AsaIniValueInMemory -Lines $gameUserLines -Section $change.Section -Key $change.Key -Value $valueText
+                $writeGameUserSettings = $true
+            }
+            elseif ($change.TargetFile -ceq 'Game.ini') {
+                $gameIniLines = Set-AsaIniValueInMemory -Lines $gameIniLines -Section $change.Section -Key $change.Key -Value $valueText
+                $writeGameIni = $true
+            }
+            else {
+                throw "Blocked target file for setting: $($change.Key)"
+            }
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Success = $false
+            Error   = $_.Exception.Message
+            Changes = @()
+        }
+    }
+
+    return [pscustomobject]@{
+        Success               = $true
+        Error                 = ''
+        Changes               = $validated.Changes
+        GameUserSettingsPath  = $paths.GameUserSettings
+        GameIniPath           = $paths.GameIni
+        BackupRoot            = $paths.BackupRoot
+        GameUserSettingsLines = $gameUserLines
+        GameIniLines          = $gameIniLines
+        WriteGameUserSettings = $writeGameUserSettings
+        WriteGameIni          = $writeGameIni
+    }
+}
+
+function Invoke-AsaAiApplyProposal {
+    param([Parameter(Mandatory)]$Proposal)
+
+    if (Get-Process -Name 'ArkAscendedServer' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+        return [pscustomobject]@{
+            Success    = $false
+            Message    = 'ASA is running. Stop the server before applying AI settings.'
+            BackupPath = ''
+        }
+    }
+
+    $prepared = New-AsaAiPreparedApply -Proposal $Proposal
+    if (-not $prepared.Success) {
+        return [pscustomobject]@{
+            Success    = $false
+            Message    = $prepared.Error
+            BackupPath = ''
+        }
+    }
+
+    if (Get-Process -Name 'ArkAscendedServer' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+        return [pscustomobject]@{
+            Success    = $false
+            Message    = 'ASA started while settings were being prepared. Nothing was written.'
+            BackupPath = ''
+        }
+    }
+
+    $timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss-fff'
+    $backupPath = Join-Path $prepared.BackupRoot ($timestamp + '_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $backupGameUserSettings = Join-Path $backupPath 'GameUserSettings.ini'
+    $backupGameIni = Join-Path $backupPath 'Game.ini'
+
+    try {
+        [void][IO.Directory]::CreateDirectory($backupPath)
+        [IO.File]::Copy($prepared.GameUserSettingsPath, $backupGameUserSettings, $false)
+        [IO.File]::Copy($prepared.GameIniPath, $backupGameIni, $false)
+
+        if (([IO.FileInfo]$prepared.GameUserSettingsPath).Length -ne ([IO.FileInfo]$backupGameUserSettings).Length) {
+            throw 'GameUserSettings.ini backup verification failed.'
+        }
+        if (([IO.FileInfo]$prepared.GameIniPath).Length -ne ([IO.FileInfo]$backupGameIni).Length) {
+            throw 'Game.ini backup verification failed.'
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Success    = $false
+            Message    = 'Backup failed; no configuration files were written. ' + $_.Exception.Message
+            BackupPath = $backupPath
+        }
+    }
+
+    if (Get-Process -Name 'ArkAscendedServer' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+        return [pscustomobject]@{
+            Success    = $false
+            Message    = 'ASA started before writing. Backups exist, but no configuration files were written.'
+            BackupPath = $backupPath
+        }
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $writeItems = New-Object System.Collections.Generic.List[object]
+
+    if ($prepared.WriteGameUserSettings) {
+        $writeItems.Add([pscustomobject]@{
+            Target = $prepared.GameUserSettingsPath
+            Lines  = $prepared.GameUserSettingsLines
+            Backup = $backupGameUserSettings
+        })
+    }
+    if ($prepared.WriteGameIni) {
+        $writeItems.Add([pscustomobject]@{
+            Target = $prepared.GameIniPath
+            Lines  = $prepared.GameIniLines
+            Backup = $backupGameIni
+        })
+    }
+
+    $tempPaths = New-Object System.Collections.Generic.List[string]
+    $replaceBackups = New-Object System.Collections.Generic.List[string]
+    $writeStarted = $false
+
+    try {
+        foreach ($item in $writeItems) {
+            $directory = Split-Path -Parent $item.Target
+            $tempPath = Join-Path $directory ('.' + [IO.Path]::GetFileName($item.Target) + '.' + [guid]::NewGuid().ToString('N') + '.ai.tmp')
+            [IO.File]::WriteAllLines($tempPath, [string[]]$item.Lines, $utf8NoBom)
+            $item | Add-Member -NotePropertyName TempPath -NotePropertyValue $tempPath
+            $tempPaths.Add($tempPath)
+        }
+
+        foreach ($item in $writeItems) {
+            if (Get-Process -Name 'ArkAscendedServer' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+                throw 'ASA started during the apply operation.'
+            }
+
+            $replaceBackup = Join-Path (Split-Path -Parent $item.Target) ('.' + [IO.Path]::GetFileName($item.Target) + '.' + [guid]::NewGuid().ToString('N') + '.replace-backup.tmp')
+            $replaceBackups.Add($replaceBackup)
+            $writeStarted = $true
+            [IO.File]::Replace($item.TempPath, $item.Target, $replaceBackup, $true)
+        }
+    }
+    catch {
+        $applyError = $_.Exception.Message
+        $rollbackErrors = New-Object System.Collections.Generic.List[string]
+
+        if ($writeStarted) {
+            foreach ($pair in @(
+                @{ Target = $prepared.GameUserSettingsPath; Backup = $backupGameUserSettings },
+                @{ Target = $prepared.GameIniPath; Backup = $backupGameIni }
+            )) {
+                try {
+                    $restoreTemp = Join-Path (Split-Path -Parent $pair.Target) ('.' + [IO.Path]::GetFileName($pair.Target) + '.' + [guid]::NewGuid().ToString('N') + '.restore.tmp')
+                    [IO.File]::Copy($pair.Backup, $restoreTemp, $false)
+                    $tempPaths.Add($restoreTemp)
+                    $restoreDiscard = Join-Path (Split-Path -Parent $pair.Target) ('.' + [IO.Path]::GetFileName($pair.Target) + '.' + [guid]::NewGuid().ToString('N') + '.restore-backup.tmp')
+                    $replaceBackups.Add($restoreDiscard)
+                    [IO.File]::Replace($restoreTemp, $pair.Target, $restoreDiscard, $true)
+                }
+                catch {
+                    $rollbackErrors.Add($_.Exception.Message)
+                }
+            }
+        }
+
+        $message = 'Apply failed. '
+        if ($writeStarted -and $rollbackErrors.Count -eq 0) {
+            $message += 'Both INI files were restored from the snapshot. '
+        }
+        elseif ($writeStarted) {
+            $message += 'Automatic rollback had an error; use the snapshot path shown below to restore manually. '
+        }
+        else {
+            $message += 'No configuration file was replaced. '
+        }
+        $message += $applyError
+
+        return [pscustomobject]@{
+            Success    = $false
+            Message    = $message
+            BackupPath = $backupPath
+        }
+    }
+    finally {
+        foreach ($path in @($tempPaths.ToArray()) + @($replaceBackups.ToArray())) {
+            if ($path -and [IO.File]::Exists($path)) {
+                try { [IO.File]::Delete($path) } catch { }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Success    = $true
+        Message    = "Applied $($prepared.Changes.Count) validated setting(s)."
+        BackupPath = $backupPath
+        Changes    = $prepared.Changes
     }
 }
 
