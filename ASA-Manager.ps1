@@ -1597,8 +1597,9 @@ $title.Font = New-Object Drawing.Font('Segoe UI Semibold', 20)
 $form.Controls.Add($title)
 $subtitle = New-Label 'Private PS5 crossplay server control panel' 27 56 500 24 $Muted 10
 $form.Controls.Add($subtitle)
+$aiAssistantButton = New-Button 'AI Assistant' 650 26 150 $Green
 $guideButton = New-Button 'Files + guide' 814 26 165 ([Drawing.Color]::FromArgb(117, 92, 190))
-$form.Controls.Add($guideButton)
+$form.Controls.AddRange(@($aiAssistantButton, $guideButton))
 
 $statusGroup = New-Group 'Server status' 24 92 978 92
 $statusDot = New-Label 'O' 18 27 30 36 $Red 20
@@ -1750,6 +1751,15 @@ $openConfigButton.Add_Click({ Show-CraftingCostsDialog })
 $advisorButton.Add_Click({ Show-ServerAdvisor })
 $importantButton.Add_Click({ Show-ImportantSettingsDialog })
 $ps5HelpButton.Add_Click({ Show-Ps5HelpDialog })
+$aiAssistantButton.Add_Click({
+    $aiPanel = Join-Path $Root 'ASA-AI-Panel.ps1'
+    if (-not (Test-Path -LiteralPath $aiPanel)) {
+        Show-ErrorBox "AI Assistant panel is missing:`n$aiPanel"
+        return
+    }
+    try { & $aiPanel }
+    catch { Show-ErrorBox ('AI Assistant failed safely: ' + $_.Exception.Message) }
+})
 $guideButton.Add_Click({ Show-ServerFilesHelp })
 
 $toolTip = New-Object Windows.Forms.ToolTip
@@ -1759,6 +1769,7 @@ $toolTip.SetToolTip($tamingBox, 'Higher values make taming finish faster. Your b
 $toolTip.SetToolTip($modsBox, 'Use numeric CurseForge ASA Project IDs separated by commas. The Manage Mods button is easier.')
 $toolTip.SetToolTip($mapBox, 'Uses exact released ASA level names. Aberration is Aberration_WP. Changing maps keeps the old map save in its own folder.')
 $toolTip.SetToolTip($advisorButton, 'Runs a password-safe, read-only check of ASA files, crossplay, resources, rates, mods, networking, and backups.')
+$toolTip.SetToolTip($aiAssistantButton, 'Opens the local Ollama AI Assistant. Preview-only: it cannot write server settings yet.')
 $toolTip.SetToolTip($guideButton, 'Explains every important ASA server file and opens the selected file or folder directly.')
 
 $script:BasicSettingsDirty = $false
