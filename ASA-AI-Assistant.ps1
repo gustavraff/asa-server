@@ -88,6 +88,78 @@ function ConvertTo-AsaValidatedProposal {
     }
 }
 
+function Test-AsaAiApplyProposal {
+    param([Parameter(Mandatory)]$Proposal)
+
+    if (-not $Proposal.Changes -or $Proposal.Changes.Count -eq 0) {
+        return [pscustomobject]@{
+            Success = $false
+            Changes = @()
+            Error   = "Proposal must contain at least one change."
+        }
+    }
+
+    $seenKeys = @{}
+    $changes = @()
+    $errors = @()
+
+    foreach ($change in $Proposal.Changes) {
+        $key = $change.Key
+        if ($seenKeys.ContainsKey($key)) {
+            $errors += "Duplicate key: ${key}"
+            continue
+        }
+
+        if (-not $script:AllowedSettings.Contains($key)) {
+            $errors += "Unknown or blocked setting: ${key}"
+            continue
+        }
+
+        $meta = $script:AllowedSettings[$key]
+        $rawValue = $change.Value
+        [decimal]$value = 0
+        $parsed = [decimal]::TryParse(
+            $rawValue,
+            [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$value
+        )
+
+        if (-not $parsed) {
+            $errors += "Invalid numeric value for ${key}: $rawValue"
+            continue
+        }
+
+        if ($value -lt [decimal]$meta.Min -or $value -gt [decimal]$meta.Max) {
+            $errors += "Out-of-range value for ${key}: $value (allowed $($meta.Min)-$($meta.Max))"
+            continue
+        }
+
+        $changes += [pscustomobject]@{
+            Key        = $key
+            Value      = $value
+            TargetFile = $meta.TargetFile
+            Section    = $meta.Section
+        }
+
+        $seenKeys[$key] = $true
+    }
+
+    if ($errors.Count -gt 0) {
+        return [pscustomobject]@{
+            Success = $false
+            Changes = @()
+            Error   = ($errors -join "`n")
+        }
+    }
+
+    return [pscustomobject]@{
+        Success = $true
+        Changes = $changes
+        Error   = ""
+    }
+}
+
 function Get-AsaAiProposal {
     param(
         [Parameter(Mandatory)][string]$Prompt,
