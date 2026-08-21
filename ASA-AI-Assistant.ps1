@@ -33,7 +33,7 @@ $script:AllowedSettings = [ordered]@{
 function Get-AsaAiAllowedSettingText {
     $lines = foreach ($key in $script:AllowedSettings.Keys) {
         $meta = $script:AllowedSettings[$key]
-        "- $key: range $($meta.Min) to $($meta.Max). $($meta.Note)"
+        "- ${key}: range $($meta.Min) to $($meta.Max). $($meta.Note)"
     }
     return ($lines -join "`n")
 }
@@ -62,12 +62,12 @@ function ConvertTo-AsaValidatedProposal {
         )
 
         if (-not $parsed) {
-            $rejected.Add("Invalid numeric value for $key: $rawValue")
+            $rejected.Add("Invalid numeric value for ${key}: $rawValue")
             continue
         }
 
         if ($value -lt [decimal]$meta.Min -or $value -gt [decimal]$meta.Max) {
-            $rejected.Add("Out-of-range value for $key: $value (allowed $($meta.Min)-$($meta.Max))")
+            $rejected.Add("Out-of-range value for ${key}: $value (allowed $($meta.Min)-$($meta.Max))")
             continue
         }
 
