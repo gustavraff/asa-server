@@ -1769,7 +1769,7 @@ $toolTip.SetToolTip($tamingBox, 'Higher values make taming finish faster. Your b
 $toolTip.SetToolTip($modsBox, 'Use numeric CurseForge ASA Project IDs separated by commas. The Manage Mods button is easier.')
 $toolTip.SetToolTip($mapBox, 'Uses exact released ASA level names. Aberration is Aberration_WP. Changing maps keeps the old map save in its own folder.')
 $toolTip.SetToolTip($advisorButton, 'Runs a password-safe, read-only check of ASA files, crossplay, resources, rates, mods, networking, and backups.')
-$toolTip.SetToolTip($aiAssistantButton, 'Opens the local Ollama AI Assistant. Preview-only: it cannot write server settings yet.')
+$toolTip.SetToolTip($aiAssistantButton, 'Opens the local Ollama AI Assistant. It acts immediately on allow-listed settings and server actions (start/stop/restart/update/backup).')
 $toolTip.SetToolTip($guideButton, 'Explains every important ASA server file and opens the selected file or folder directly.')
 
 $script:BasicSettingsDirty = $false

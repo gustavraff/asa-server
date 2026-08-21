@@ -1,7 +1,8 @@
 param(
     [string]$Prompt,
     [string]$Model = 'qwen3:8b',
-    [string]$OllamaBaseUrl = 'http://127.0.0.1:11434'
+    [string]$OllamaBaseUrl = 'http://127.0.0.1:11434',
+    [switch]$Execute
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +28,77 @@ $script:AllowedSettings = [ordered]@{
     DayCycleSpeedScale                   = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=10.0;  Note='Higher makes the whole day/night cycle pass faster.' }
     DayTimeSpeedScale                    = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=10.0;  Note='Lower makes daylight last longer.' }
     NightTimeSpeedScale                  = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=10.0;  Note='Higher makes nighttime pass faster.' }
+}
+
+$script:AllowedActions = [ordered]@{
+    StartServer      = 'Starts the ASA server if it is not already running.'
+    SafeStop         = 'Safely saves the world and stops the ASA server. Disconnects all players.'
+    Restart          = 'Warns connected players, then safely stops and restarts the ASA server.'
+    UpdateAndRestart = 'Warns players, safely stops ASA, updates the official Steam server files (App 2430930), and restarts.'
+    SafeBackup       = 'Warns players if online, safely stops ASA, creates a full save backup, and restarts if it had been running.'
+}
+
+function Get-AsaAiAllowedActionText {
+    $lines = foreach ($key in $script:AllowedActions.Keys) {
+        "- ${key}: $($script:AllowedActions[$key])"
+    }
+    return ($lines -join "`n")
+}
+
+function Get-AsaAiRunningServerProcess {
+    Get-Process -Name 'ArkAscendedServer' -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+
+function Invoke-AsaAiServerAction {
+    param([Parameter(Mandatory)][string]$Action)
+
+    $root = $PSScriptRoot
+    switch ($Action) {
+        'StartServer' {
+            if (Get-AsaAiRunningServerProcess) {
+                return [pscustomobject]@{ Success = $true; Message = 'ASA is already running.' }
+            }
+            Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}"' -f (Join-Path $root 'StartServer.bat')) -WorkingDirectory $root -WindowStyle Hidden
+            for ($i = 0; $i -lt 20; $i++) {
+                Start-Sleep -Seconds 1
+                if (Get-AsaAiRunningServerProcess) {
+                    return [pscustomobject]@{ Success = $true; Message = 'ASA start requested and the process is now running. Full world load still takes a few minutes.' }
+                }
+            }
+            return [pscustomobject]@{ Success = $false; Message = 'ASA start was requested but no process appeared within 20 seconds.' }
+        }
+        'SafeStop' {
+            if (-not (Get-AsaAiRunningServerProcess)) {
+                return [pscustomobject]@{ Success = $true; Message = 'ASA is already stopped.' }
+            }
+            $process = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'StopServer.ps1') -WorkingDirectory $root -WindowStyle Hidden -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+                return [pscustomobject]@{ Success = $false; Message = 'Safe shutdown did not complete. The server was not force-killed.' }
+            }
+            return [pscustomobject]@{ Success = $true; Message = 'ASA was saved and safely stopped.' }
+        }
+        'Restart' {
+            Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}"' -f (Join-Path $root 'RestartServer.bat')) -WorkingDirectory $root -WindowStyle Hidden
+            return [pscustomobject]@{ Success = $true; Message = 'Restart requested: players are being warned (60/30/10s), then ASA will safely stop and start again.' }
+        }
+        'UpdateAndRestart' {
+            $process = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'Update-And-Restart.ps1'), '-NoPause' -WorkingDirectory $root -WindowStyle Hidden -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+                return [pscustomobject]@{ Success = $false; Message = "Update failed (exit code $($process.ExitCode)). Run Update-And-Restart.ps1 manually to see full SteamCMD output." }
+            }
+            return [pscustomobject]@{ Success = $true; Message = 'ASA was updated/validated against Steam App 2430930 and restarted if it had been running.' }
+        }
+        'SafeBackup' {
+            $process = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'SafeBackup-And-Restart.ps1'), '-NoPause' -WorkingDirectory $root -WindowStyle Hidden -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+                return [pscustomobject]@{ Success = $false; Message = "Backup failed (exit code $($process.ExitCode)). No confirmed new backup was made." }
+            }
+            return [pscustomobject]@{ Success = $true; Message = 'A full save backup was created; ASA was restarted afterward if it had been running.' }
+        }
+        default {
+            return [pscustomobject]@{ Success = $false; Message = "Unknown or blocked action: $Action" }
+        }
+    }
 }
 
 function Get-AsaAiAllowedSettingText {
@@ -79,9 +151,29 @@ function ConvertTo-AsaValidatedProposal {
         })
     }
 
+    $validatedActions = New-Object System.Collections.Generic.List[object]
+    $seenActions = @{}
+    foreach ($action in @($RawProposal.actions)) {
+        $name = [string]$action.name
+        if (-not $script:AllowedActions.Contains($name)) {
+            $rejected.Add("Unknown or blocked action: $name")
+            continue
+        }
+        if ($seenActions.ContainsKey($name)) {
+            $rejected.Add("Duplicate action: $name")
+            continue
+        }
+        $seenActions[$name] = $true
+        $validatedActions.Add([pscustomobject]@{
+            Name   = $name
+            Reason = [string]$action.reason
+        })
+    }
+
     return [pscustomobject]@{
         Summary  = [string]$RawProposal.summary
         Changes  = $validated.ToArray()
+        Actions  = $validatedActions.ToArray()
         Rejected = $rejected.ToArray()
         ReadOnly = $true
     }
@@ -475,6 +567,7 @@ function Get-AsaAiProposal {
     )
 
     $allowedKeys = [object[]]@($script:AllowedSettings.Keys)
+    $allowedActionKeys = [object[]]@($script:AllowedActions.Keys)
     $schema = @{
         type = 'object'
         additionalProperties = $false
@@ -493,21 +586,38 @@ function Get-AsaAiProposal {
                     required = @('key','value','reason')
                 }
             }
+            actions = @{
+                type = 'array'
+                items = @{
+                    type = 'object'
+                    additionalProperties = $false
+                    properties = @{
+                        name   = @{ type = 'string'; enum = $allowedActionKeys }
+                        reason = @{ type = 'string' }
+                    }
+                    required = @('name','reason')
+                }
+            }
         }
-        required = @('summary','changes')
+        required = @('summary','changes','actions')
     }
 
     $allowedText = Get-AsaAiAllowedSettingText
+    $allowedActionText = Get-AsaAiAllowedActionText
     $systemPrompt = @"
-You are the read-only settings assistant for a private ARK: Survival Ascended dedicated server.
-You may ONLY propose settings from the allow-list below. Never propose shell commands, PowerShell, file operations, passwords, paths, mods, firewall changes, deletes, or arbitrary INI keys.
+You are the settings and operations assistant for a private ARK: Survival Ascended dedicated server.
+You may ONLY propose settings from the allow-list below, and ONLY trigger operations from the allow-list of actions below. Never propose shell commands, PowerShell, file operations, passwords, paths, mods, firewall changes, deletes, or arbitrary INI keys or actions.
 Return only JSON matching the supplied schema.
 Every numeric value must be a plain invariant decimal string such as "4", "0.5", or "12.0". Do not include x, %, units, or explanatory text in value.
-If the request cannot be satisfied using only the allow-list, return an empty changes array and explain why in summary.
+If the request cannot be satisfied using only the allow-lists, return empty changes and actions arrays and explain why in summary.
 When a user asks for shorter nights, increase NightTimeSpeedScale. When a user asks for longer days, decrease DayTimeSpeedScale.
+When a user asks to start, stop, restart, update, or back up the server, use the matching action instead of a setting. You do not need to separately request a stop or start around a settings change: the system already stops the server before writing settings and restarts it afterward if it was running.
 
 Allowed settings:
 $allowedText
+
+Allowed actions:
+$allowedActionText
 "@
 
     $body = @{
@@ -544,6 +654,61 @@ $allowedText
     return ConvertTo-AsaValidatedProposal -RawProposal $rawProposal
 }
 
-if ($Prompt) {
+function Invoke-AsaAiRequest {
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [string]$Model = 'qwen3:8b',
+        [string]$OllamaBaseUrl = 'http://127.0.0.1:11434'
+    )
+
+    $proposal = Get-AsaAiProposal -Prompt $Prompt -Model $Model -OllamaBaseUrl $OllamaBaseUrl
+    $steps = New-Object System.Collections.Generic.List[object]
+
+    $hasChanges = @($proposal.Changes).Count -gt 0
+    $requestedActionNames = @($proposal.Actions | ForEach-Object { $_.Name })
+    $hasRestoringAction = @('StartServer', 'Restart', 'UpdateAndRestart', 'SafeBackup') | Where-Object { $requestedActionNames -contains $_ }
+
+    $wasRunningBeforeChanges = $false
+    $stoppedOk = $true
+    if ($hasChanges) {
+        $wasRunningBeforeChanges = [bool](Get-AsaAiRunningServerProcess)
+        if ($wasRunningBeforeChanges) {
+            $stopResult = Invoke-AsaAiServerAction -Action 'SafeStop'
+            $stoppedOk = $stopResult.Success
+            $steps.Add([pscustomobject]@{ Step = 'Stop before settings change'; Success = $stopResult.Success; Message = $stopResult.Message })
+        }
+
+        if ($stoppedOk) {
+            $applyResult = Invoke-AsaAiApplyProposal -Proposal $proposal
+            $steps.Add([pscustomobject]@{ Step = 'Apply settings'; Success = $applyResult.Success; Message = $applyResult.Message })
+        }
+        else {
+            $steps.Add([pscustomobject]@{ Step = 'Apply settings'; Success = $false; Message = 'Skipped because the safe stop before writing settings did not succeed.' })
+        }
+    }
+
+    foreach ($action in @($proposal.Actions)) {
+        $result = Invoke-AsaAiServerAction -Action $action.Name
+        $steps.Add([pscustomobject]@{ Step = "Action: $($action.Name)"; Success = $result.Success; Message = $result.Message })
+    }
+
+    if ($hasChanges -and $stoppedOk -and $wasRunningBeforeChanges -and -not $hasRestoringAction) {
+        $startResult = Invoke-AsaAiServerAction -Action 'StartServer'
+        $steps.Add([pscustomobject]@{ Step = 'Restart after settings change'; Success = $startResult.Success; Message = $startResult.Message })
+    }
+
+    return [pscustomobject]@{
+        Summary  = $proposal.Summary
+        Changes  = $proposal.Changes
+        Actions  = $proposal.Actions
+        Rejected = $proposal.Rejected
+        Steps    = $steps.ToArray()
+    }
+}
+
+if ($Prompt -and $Execute) {
+    Invoke-AsaAiRequest -Prompt $Prompt -Model $Model -OllamaBaseUrl $OllamaBaseUrl | ConvertTo-Json -Depth 8
+}
+elseif ($Prompt) {
     Get-AsaAiProposal -Prompt $Prompt -Model $Model -OllamaBaseUrl $OllamaBaseUrl | ConvertTo-Json -Depth 8
 }

@@ -13,8 +13,6 @@ if (-not (Test-Path -LiteralPath $enginePath)) {
 
 . $enginePath
 
-$script:PendingProposal = $null
-
 $Background = [Drawing.Color]::FromArgb(25, 29, 36)
 $Panel = [Drawing.Color]::FromArgb(37, 43, 52)
 $Input = [Drawing.Color]::FromArgb(53, 61, 72)
@@ -27,12 +25,12 @@ $Red = [Drawing.Color]::FromArgb(226, 82, 82)
 
 $form = New-Object Windows.Forms.Form
 $form.Text = 'Local AI Assistant - ASA Manager'
-$form.Size = New-Object Drawing.Size(900, 700)
+$form.Size = New-Object Drawing.Size(900, 780)
 $form.StartPosition = 'CenterScreen'
 $form.BackColor = $Background
 $form.ForeColor = $Text
 $form.Font = New-Object Drawing.Font('Segoe UI', 10)
-$form.MinimumSize = New-Object Drawing.Size(900, 700)
+$form.MinimumSize = New-Object Drawing.Size(900, 780)
 
 $title = New-Object Windows.Forms.Label
 $title.Text = 'LOCAL AI ASSISTANT'
@@ -43,14 +41,14 @@ $title.Font = New-Object Drawing.Font('Segoe UI Semibold', 18)
 $form.Controls.Add($title)
 
 $subtitle = New-Object Windows.Forms.Label
-$subtitle.Text = 'Preview first. Apply requires confirmation, a backup, and a stopped ASA server.'
+$subtitle.Text = 'Tell it what you want. It runs immediately using only allow-listed settings and server actions.'
 $subtitle.Location = New-Object Drawing.Point(24, 54)
-$subtitle.Size = New-Object Drawing.Size(800, 24)
+$subtitle.Size = New-Object Drawing.Size(840, 24)
 $subtitle.ForeColor = $Muted
 $form.Controls.Add($subtitle)
 
 $promptLabel = New-Object Windows.Forms.Label
-$promptLabel.Text = 'Tell the assistant what you want to change'
+$promptLabel.Text = 'Tell the assistant what you want to change or do'
 $promptLabel.Location = New-Object Drawing.Point(22, 92)
 $promptLabel.Size = New-Object Drawing.Size(500, 24)
 $promptLabel.ForeColor = $Text
@@ -69,10 +67,10 @@ $promptBox.Text = 'Set taming to 10x, harvesting to 4x, and make nights shorter'
 $form.Controls.Add($promptBox)
 
 $askButton = New-Object Windows.Forms.Button
-$askButton.Text = 'Ask local AI'
+$askButton.Text = 'Run request'
 $askButton.Location = New-Object Drawing.Point(22, 220)
 $askButton.Size = New-Object Drawing.Size(165, 42)
-$askButton.BackColor = $Blue
+$askButton.BackColor = $Green
 $askButton.ForeColor = [Drawing.Color]::White
 $askButton.FlatStyle = 'Flat'
 $askButton.FlatAppearance.BorderSize = 0
@@ -88,21 +86,10 @@ $clearButton.FlatStyle = 'Flat'
 $clearButton.FlatAppearance.BorderSize = 0
 $form.Controls.Add($clearButton)
 
-$applyButton = New-Object Windows.Forms.Button
-$applyButton.Text = 'Apply changes'
-$applyButton.Location = New-Object Drawing.Point(321, 220)
-$applyButton.Size = New-Object Drawing.Size(165, 42)
-$applyButton.BackColor = $Green
-$applyButton.ForeColor = [Drawing.Color]::White
-$applyButton.FlatStyle = 'Flat'
-$applyButton.FlatAppearance.BorderSize = 0
-$applyButton.Enabled = $false
-$form.Controls.Add($applyButton)
-
 $status = New-Object Windows.Forms.Label
 $status.Text = 'Ready - using local Ollama model qwen3:8b'
-$status.Location = New-Object Drawing.Point(500, 230)
-$status.Size = New-Object Drawing.Size(362, 26)
+$status.Location = New-Object Drawing.Point(321, 230)
+$status.Size = New-Object Drawing.Size(541, 26)
 $status.ForeColor = $Green
 $status.TextAlign = 'MiddleRight'
 $form.Controls.Add($status)
@@ -125,7 +112,7 @@ $summaryBox.BorderStyle = 'FixedSingle'
 $form.Controls.Add($summaryBox)
 
 $changesLabel = New-Object Windows.Forms.Label
-$changesLabel.Text = 'Proposed setting changes'
+$changesLabel.Text = 'Settings changes and actions'
 $changesLabel.Location = New-Object Drawing.Point(22, 378)
 $changesLabel.Size = New-Object Drawing.Size(300, 24)
 $changesLabel.ForeColor = $Text
@@ -133,21 +120,40 @@ $form.Controls.Add($changesLabel)
 
 $list = New-Object Windows.Forms.ListView
 $list.Location = New-Object Drawing.Point(22, 406)
-$list.Size = New-Object Drawing.Size(840, 175)
+$list.Size = New-Object Drawing.Size(840, 140)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.GridLines = $true
 $list.BackColor = $Panel
 $list.ForeColor = $Text
-[void]$list.Columns.Add('Setting', 235)
-[void]$list.Columns.Add('Value', 90)
-[void]$list.Columns.Add('File', 180)
-[void]$list.Columns.Add('Reason', 315)
+[void]$list.Columns.Add('Type', 90)
+[void]$list.Columns.Add('Setting / Action', 210)
+[void]$list.Columns.Add('Value', 80)
+[void]$list.Columns.Add('Reason', 440)
 $form.Controls.Add($list)
 
+$logLabel = New-Object Windows.Forms.Label
+$logLabel.Text = 'Execution log'
+$logLabel.Location = New-Object Drawing.Point(22, 554)
+$logLabel.Size = New-Object Drawing.Size(300, 24)
+$logLabel.ForeColor = $Text
+$form.Controls.Add($logLabel)
+
+$logBox = New-Object Windows.Forms.TextBox
+$logBox.Location = New-Object Drawing.Point(22, 582)
+$logBox.Size = New-Object Drawing.Size(840, 110)
+$logBox.Multiline = $true
+$logBox.ReadOnly = $true
+$logBox.ScrollBars = 'Vertical'
+$logBox.BackColor = $Panel
+$logBox.ForeColor = $Text
+$logBox.BorderStyle = 'FixedSingle'
+$logBox.Font = New-Object Drawing.Font('Consolas', 9)
+$form.Controls.Add($logBox)
+
 $safety = New-Object Windows.Forms.Label
-$safety.Text = 'SAFETY: Only allow-listed settings can be applied. Apply refuses while ASA is running and snapshots both INI files first.'
-$safety.Location = New-Object Drawing.Point(22, 596)
+$safety.Text = 'SAFETY: Only allow-listed settings and actions can run. Settings writes always snapshot both INI files first and refuse while ASA is mid-write.'
+$safety.Location = New-Object Drawing.Point(22, 700)
 $safety.Size = New-Object Drawing.Size(840, 30)
 $safety.ForeColor = $Amber
 $safety.TextAlign = 'MiddleCenter'
@@ -155,7 +161,7 @@ $form.Controls.Add($safety)
 
 $closeButton = New-Object Windows.Forms.Button
 $closeButton.Text = 'Close'
-$closeButton.Location = New-Object Drawing.Point(692, 628)
+$closeButton.Location = New-Object Drawing.Point(692, 732)
 $closeButton.Size = New-Object Drawing.Size(170, 36)
 $closeButton.BackColor = [Drawing.Color]::FromArgb(79, 99, 125)
 $closeButton.ForeColor = [Drawing.Color]::White
@@ -164,11 +170,10 @@ $closeButton.FlatAppearance.BorderSize = 0
 $form.Controls.Add($closeButton)
 
 $clearButton.Add_Click({
-    $script:PendingProposal = $null
-    $applyButton.Enabled = $false
     $promptBox.Clear()
     $summaryBox.Clear()
     $list.Items.Clear()
+    $logBox.Clear()
     $status.Text = 'Ready'
     $status.ForeColor = $Green
 })
@@ -176,9 +181,6 @@ $clearButton.Add_Click({
 $closeButton.Add_Click({ $form.Close() })
 
 $askButton.Add_Click({
-    $script:PendingProposal = $null
-    $applyButton.Enabled = $false
-
     $request = $promptBox.Text.Trim()
     if (-not $request) {
         $status.Text = 'Enter a request first.'
@@ -187,141 +189,64 @@ $askButton.Add_Click({
     }
 
     $askButton.Enabled = $false
+    $clearButton.Enabled = $false
     $form.Cursor = 'WaitCursor'
-    $status.Text = 'Thinking locally...'
+    $status.Text = 'Thinking locally and running your request...'
     $status.ForeColor = $Amber
     $summaryBox.Clear()
     $list.Items.Clear()
+    $logBox.Clear()
     [Windows.Forms.Application]::DoEvents()
 
     try {
-        $proposal = Get-AsaAiProposal -Prompt $request -Model 'qwen3:8b'
-        $summaryBox.Text = $proposal.Summary
+        $result = Invoke-AsaAiRequest -Prompt $request -Model 'qwen3:8b'
+        $summaryBox.Text = $result.Summary
 
-        foreach ($change in @($proposal.Changes)) {
-            $item = New-Object Windows.Forms.ListViewItem([string]$change.Key)
-            [void]$item.SubItems.Add(([string]$change.Value))
-            [void]$item.SubItems.Add([string]$change.TargetFile)
+        foreach ($change in @($result.Changes)) {
+            $item = New-Object Windows.Forms.ListViewItem('Setting')
+            [void]$item.SubItems.Add([string]$change.Key)
+            [void]$item.SubItems.Add([string]$change.Value)
             [void]$item.SubItems.Add([string]$change.Reason)
             [void]$list.Items.Add($item)
         }
-
-        if (@($proposal.Rejected).Count -gt 0) {
-            $summaryBox.Text += "`r`nRejected: " + (@($proposal.Rejected) -join '; ')
+        foreach ($action in @($result.Actions)) {
+            $item = New-Object Windows.Forms.ListViewItem('Action')
+            [void]$item.SubItems.Add([string]$action.Name)
+            [void]$item.SubItems.Add('')
+            [void]$item.SubItems.Add([string]$action.Reason)
+            [void]$list.Items.Add($item)
         }
 
-        if (@($proposal.Changes).Count -gt 0) {
-            $script:PendingProposal = $proposal
-            $applyButton.Enabled = $true
-            $status.Text = "Preview ready - $(@($proposal.Changes).Count) validated change(s)"
-            $status.ForeColor = $Green
+        if (@($result.Rejected).Count -gt 0) {
+            $summaryBox.Text += "`r`nRejected: " + (@($result.Rejected) -join '; ')
         }
-        else {
-            $status.Text = 'No allowed changes proposed - nothing to apply'
+
+        $logLines = foreach ($step in @($result.Steps)) {
+            $mark = if ($step.Success) { 'OK' } else { 'FAILED' }
+            "[$mark] $($step.Step): $($step.Message)"
+        }
+        $logBox.Text = ($logLines -join "`r`n")
+
+        $stepCount = @($result.Steps).Count
+        $failedCount = @(@($result.Steps) | Where-Object { -not $_.Success }).Count
+
+        if ($stepCount -eq 0 -and @($result.Changes).Count -eq 0 -and @($result.Actions).Count -eq 0) {
+            $status.Text = 'Nothing to do - no allowed changes or actions were proposed'
             $status.ForeColor = $Amber
         }
-    }
-    catch {
-        $script:PendingProposal = $null
-        $applyButton.Enabled = $false
-        $status.Text = 'AI request failed safely'
-        $status.ForeColor = $Red
-        $summaryBox.Text = $_.Exception.Message
-    }
-    finally {
-        $form.Cursor = 'Default'
-        $askButton.Enabled = $true
-    }
-})
-
-$applyButton.Add_Click({
-    if (-not $script:PendingProposal) {
-        $applyButton.Enabled = $false
-        [Windows.Forms.MessageBox]::Show('There is no validated preview to apply.', 'ASA AI Assistant', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-        return
-    }
-
-    $canonical = Test-AsaAiApplyProposal -Proposal $script:PendingProposal
-    if (-not $canonical.Success) {
-        $script:PendingProposal = $null
-        $applyButton.Enabled = $false
-        [Windows.Forms.MessageBox]::Show("The preview failed apply-time validation and was discarded.`r`n`r`n$($canonical.Error)", 'ASA AI Assistant', [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Error) | Out-Null
-        return
-    }
-
-    $changeText = ($canonical.Changes | ForEach-Object {
-        "$($_.Key) = $($_.Value)    [$($_.TargetFile)]"
-    }) -join "`r`n"
-
-    $confirmationText = @"
-Apply these exact validated settings?
-
-$changeText
-
-ASA must be stopped. Before writing, both GameUserSettings.ini and Game.ini will be copied to a timestamped backup folder.
-"@
-
-    $answer = [Windows.Forms.MessageBox]::Show(
-        $confirmationText,
-        'Confirm AI settings apply',
-        [Windows.Forms.MessageBoxButtons]::YesNo,
-        [Windows.Forms.MessageBoxIcon]::Warning
-    )
-    if ($answer -ne [Windows.Forms.DialogResult]::Yes) {
-        $status.Text = 'Apply cancelled - nothing changed'
-        $status.ForeColor = $Amber
-        return
-    }
-
-    $askButton.Enabled = $false
-    $clearButton.Enabled = $false
-    $applyButton.Enabled = $false
-    $form.Cursor = 'WaitCursor'
-    $status.Text = 'Applying validated settings safely...'
-    $status.ForeColor = $Amber
-    [Windows.Forms.Application]::DoEvents()
-
-    try {
-        $result = Invoke-AsaAiApplyProposal -Proposal $script:PendingProposal
-        $script:PendingProposal = $null
-        $applyButton.Enabled = $false
-
-        if ($result.Success) {
-            $status.Text = 'Settings applied - new preview required for another apply'
-            $status.ForeColor = $Green
-            [Windows.Forms.MessageBox]::Show(
-                "$($result.Message)`r`n`r`nBackup:`r`n$($result.BackupPath)",
-                'ASA AI Assistant',
-                [Windows.Forms.MessageBoxButtons]::OK,
-                [Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
+        elseif ($failedCount -gt 0) {
+            $status.Text = "Done with $failedCount failed step(s) - see execution log"
+            $status.ForeColor = $Red
         }
         else {
-            $status.Text = 'Apply refused or failed safely - preview discarded'
-            $status.ForeColor = $Red
-            $message = $result.Message
-            if ($result.BackupPath) {
-                $message += "`r`n`r`nBackup/snapshot path:`r`n$($result.BackupPath)"
-            }
-            [Windows.Forms.MessageBox]::Show(
-                $message,
-                'ASA AI Assistant',
-                [Windows.Forms.MessageBoxButtons]::OK,
-                [Windows.Forms.MessageBoxIcon]::Error
-            ) | Out-Null
+            $status.Text = "Done - $stepCount step(s) completed successfully"
+            $status.ForeColor = $Green
         }
     }
     catch {
-        $script:PendingProposal = $null
-        $applyButton.Enabled = $false
-        $status.Text = 'Apply failed safely - preview discarded'
+        $status.Text = 'Request failed safely'
         $status.ForeColor = $Red
-        [Windows.Forms.MessageBox]::Show(
-            $_.Exception.Message,
-            'ASA AI Assistant',
-            [Windows.Forms.MessageBoxButtons]::OK,
-            [Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
+        $summaryBox.Text = $_.Exception.Message
     }
     finally {
         $form.Cursor = 'Default'
