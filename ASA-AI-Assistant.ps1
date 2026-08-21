@@ -177,7 +177,7 @@ function Test-AsaAiApplyProposal {
 
 function Set-AsaIniValueInMemory {
     param(
-        [Parameter(Mandatory)][string[]]$Lines,
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines,
         [Parameter(Mandatory)][string]$Section,
         [Parameter(Mandatory)][string]$Key,
         [Parameter(Mandatory)][string]$Value
