@@ -1,0 +1,56 @@
+ASA MOD REVIEW QUEUE
+
+Paste CurseForge ARK: Survival Ascended mod links below, one per line.
+You can also send the links directly to Codex in chat.
+
+Do not install anything manually. Codex will check each mod for:
+- Correct ASA CurseForge Project ID
+- PS5/cross-platform support
+- Required dependencies and correct load order
+- Compatibility with the selected map and other queued mods
+- Recent updates and known removal risks
+- Likely RAM, startup-time, and save-size impact
+
+INSTALLATION WORKFLOW
+1. Review every queued mod.
+2. Make a safe world backup.
+3. Install a small compatible batch.
+4. Start ASA and inspect the complete startup/mod logs.
+5. Confirm the server advertises and PS5 can join.
+6. Add the next batch only after the previous batch is stable.
+
+LINKS TO REVIEW
+
+VERIFIED - WAITING FOR "LIST DONE"
+- TG Stacking Mod 1000-50 - Project ID 929800
+  Load first/highest. Removing it later deletes resources created by it.
+- Custom Dino Levels - Project ID 928708
+  Run a wild-dino wipe after installation.
+- Awesome Spyglass! - Project ID 947033
+- Pelayori's Cryo Storage (Crossplay!) - Project ID 928793
+- Solo Farm Mod - Project ID 928501
+- Awesome ARK Tools - Project ID 941450
+- Cybers Structures QoL+ (Crossplay) - Project ID 940975
+  Selected as the main structures, pulling, storage, and crafting QoL system.
+
+ALREADY INSTALLED AND VERIFIED
+- B+ Menu - Project ID 1339012
+  Cross-platform pause-menu mod configured with Gustav's exact FPS-on and reset command lists.
+  Load immediately after TG Stacking so its pause-menu controls take priority over other UI mods.
+- Auto Engrams! - Project ID 953154
+  Cross-platform automatic level-based engram learning. ForceUnlockLevel is explicitly disabled (0) so boss/Tek progression is not intentionally bypassed.
+
+PENDING RATE CHANGE - APPLY WITH THE MOD RESTART
+- No Wipe-style preset: 2x XP, 3x harvest, 3x taming
+- Breeding: 0.05 mating interval, 20x hatch, 20x mature
+- Imprinting: 0.05 cuddle interval and 100x imprint amount, giving 100% on the first successful care
+
+REJECTED - DO NOT INSTALL
+- CMH Experience v2 - Project ID 1380931
+  Reason: Its FPS/reset pause-menu buttons did not appear on PS5 after two tested load orders. Replaced by B+ Menu, which is specifically designed for configurable FPS buttons.
+- Automated Ark - Project ID 928597
+  Reason: User selected Cybers Structures instead; installing both would duplicate major pulling, storage, and crafting systems.
+- FPS Boost Buttons (PauseMenu)
+  CurseForge: https://www.curseforge.com/ark-survival-ascended/mods/fpsboostbuttons
+  Project ID: 1342708
+  Reason: Replaced with owner-controlled console-command presets in ASA Manager and native ASA command history.

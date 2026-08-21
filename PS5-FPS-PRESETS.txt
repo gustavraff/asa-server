@@ -1,0 +1,27 @@
+GUSTAV'S PS5 ASA FPS PRESETS
+============================
+
+These commands are client-side. They change only the player who runs them,
+not the dedicated server and not every player automatically.
+
+YOUR MAXIMUM BOOST
+------------------
+r.VolumetricCloud 0|r.VolumetricFog 0|r.Fog 0|r.Lumen.DiffuseIndirect.Allow 0|r.Lumen.Reflections.Allow 0|grass.Enable 0|r.Water.SingleLayer.Reflection 0|r.ShadowQuality 0
+
+RESET VALUES
+------------
+r.VolumetricCloud 1|r.VolumetricFog 1|r.Fog 1|r.Lumen.DiffuseIndirect.Allow 1|r.Lumen.Reflections.Allow 1|grass.Enable 1|r.Water.SingleLayer.Reflection 1|r.ShadowQuality 1
+
+HOW TO USE ON PS5
+-----------------
+1. In ASA, set Settings > Advanced > Console Access to ON.
+2. While playing, pause and open Console Commands from the lower-left.
+3. Enter YOUR MAXIMUM BOOST once.
+4. ASA keeps previously entered commands in its console history, so select it
+   from history on later sessions instead of typing all eight commands again.
+5. Use RESET VALUES to turn the eight features back on at level 1.
+
+IMPORTANT
+---------
+Fully closing and reopening ASA is the only guaranteed way to restore the exact
+current PS5 defaults. No server restart is needed for these graphics commands.

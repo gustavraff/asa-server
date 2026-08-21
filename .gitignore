@@ -1,0 +1,21 @@
+# Logs and result files
+*.log
+*-last-result.txt
+*-result.txt
+
+# Backups and generated data
+backups/
+config-snapshots/
+test-results/
+.image-review/
+
+# Server/game binaries and SteamCMD
+server/
+steamcmd/
+
+# Local config / credentials
+server-config.cmd
+server-config.cmd.bak
+
+# Temporary state
+*.json

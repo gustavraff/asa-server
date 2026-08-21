@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gustav's ASA Server Handbook</title>
+<style>
+:root{color-scheme:dark;--bg:#11151b;--panel:#1d242e;--panel2:#252f3b;--text:#eef2f7;--muted:#aeb9c8;--blue:#4c9aff;--green:#45c985;--amber:#f2b45d;--red:#ef6a6a;--purple:#a98bff;--border:#364252}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:linear-gradient(140deg,#11151b,#151b25 55%,#11151b);color:var(--text);font:16px/1.55 "Segoe UI",system-ui,sans-serif}header{padding:42px 24px 32px;background:linear-gradient(120deg,#202a39,#1b2636 55%,#24203b);border-bottom:1px solid var(--border)}header>div,main{max-width:1060px;margin:auto}h1{margin:0 0 8px;font-size:clamp(30px,5vw,50px);line-height:1.1}h2{margin:0 0 16px;font-size:27px}h3{margin:26px 0 8px;color:#dbe7f5}.lead{font-size:19px;color:var(--muted);max-width:800px}.badge{display:inline-block;padding:5px 10px;margin:12px 8px 0 0;border:1px solid #3d7259;border-radius:999px;background:#173426;color:#9cf0bf;font-weight:650}.badge.blue{border-color:#3e628d;background:#172c45;color:#a9d3ff}nav{position:sticky;top:0;z-index:5;background:#111821ee;backdrop-filter:blur(10px);border-bottom:1px solid var(--border);overflow:auto;white-space:nowrap;padding:11px calc((100% - 1060px)/2 + 14px)}nav a{display:inline-block;color:#cbd8e8;text-decoration:none;padding:7px 11px;border-radius:7px}nav a:hover{background:#283547;color:#fff}main{padding:28px 18px 80px}.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px;margin:0 0 22px;box-shadow:0 12px 34px #0002}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:13px}.mini{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:15px}.mini strong{display:block;color:#fff;margin-bottom:5px}code,kbd{font-family:"Cascadia Mono",Consolas,monospace;background:#0f141b;border:1px solid #344050;border-radius:5px;padding:2px 6px;color:#bde0ff;overflow-wrap:anywhere}pre{white-space:pre-wrap;background:#0f141b;border:1px solid #344050;border-radius:9px;padding:13px;overflow:auto}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--border);padding:9px 8px}th{color:#a9d3ff}.ok{color:var(--green)}.warn{color:var(--amber)}.danger{color:var(--red)}.muted{color:var(--muted)}.callout{border-left:4px solid var(--blue);background:#17283b;padding:13px 16px;border-radius:0 8px 8px 0;margin:15px 0}.callout.warn{border-color:var(--amber);background:#352817;color:var(--text)}.callout.danger{border-color:var(--red);background:#351c20;color:var(--text)}ol,ul{padding-left:24px}li{margin:6px 0}.button{border:0;border-radius:7px;background:#355f97;color:white;padding:7px 11px;cursor:pointer;margin-left:8px}.button:hover{filter:brightness(1.15)}details{background:#18202a;border:1px solid var(--border);border-radius:9px;padding:12px 14px;margin:10px 0}summary{cursor:pointer;font-weight:700;color:#dce9f8}footer{text-align:center;color:var(--muted);margin-top:32px}@media print{nav,.button{display:none}body{background:white;color:#111}.card,.mini,details{background:white;color:#111;box-shadow:none;border-color:#bbb}code,kbd,pre{background:#eee;color:#111}.muted{color:#444}header{background:white;color:#111}.badge{color:#111;background:#eee}}
+</style>
+</head>
+<body>
+<header><div>
+  <h1>Gustav's ASA Server Handbook</h1>
+  <div class="lead">The password-safe, offline guide for running your ARK: Survival Ascended private PS5 crossplay server and custom manager.</div>
+  <span class="badge">Current map: Aberration</span><span class="badge blue">Server: Gustav's ASA Server</span><span class="badge blue">Updated: 18 August 2026</span><span class="badge">Static server IP verified</span>
+</div></header>
+<nav>
+  <a href="#quick">Quick start</a><a href="#manager">Manager</a><a href="#ps5">PS5 & admin</a><a href="#settings">Rates & maps</a><a href="#mods">Mods</a><a href="#safety">Saves & updates</a><a href="#network">Network</a><a href="#trouble">Troubleshooting</a><a href="#files">Files</a><a href="#cheats">Cheat sheet</a>
+</nav>
+<main>
+
+<section class="card" id="quick">
+<h2>Quick start</h2>
+<div class="grid">
+  <div class="mini"><strong>Start</strong>Open <b>ASA Server Manager</b> from the Windows desktop and press <b>Start server</b>.</div>
+  <div class="mini"><strong>Stop</strong>Ask everyone to leave, then press <b>Safe stop</b>. This saves through local RCON before closing.</div>
+  <div class="mini"><strong>Restart</strong>Press <b>Restart</b>. Connected players receive a 60-second countdown before the safe restart.</div>
+  <div class="mini"><strong>Update</strong>Press <b>Update + restart</b>. The official ASA server uses Steam App ID <code>2430930</code>.</div>
+  <div class="mini"><strong>Back up</strong>Press <b>Safe backup</b>. The manager safely stops, copies the save, verifies it, and restarts.</div>
+  <div class="mini"><strong>Health check</strong>Press <b>Run offline server advisor</b>. Fix red blockers before restarting.</div>
+</div>
+<div class="callout warn"><b>Golden rule:</b> do not close the ASA process in Task Manager and do not edit INI files while it is running. Use the manager's safe controls.</div>
+<div class="callout"><b>Remote access repair completed:</b> Windows Ethernet was restored to static <code>192.168.1.179</code> on 18 August 2026, matching the router forwarding target and <code>SERVER_IP</code>. Gateway and internet verification passed.</div>
+</section>
+
+<section class="card" id="manager">
+<h2>Your custom manager</h2>
+<table><thead><tr><th>Button</th><th>What it does</th><th>When to use it</th></tr></thead><tbody>
+<tr><td>Start server</td><td>Starts Aberration and lets ASA validate/update the configured CurseForge mods.</td><td>After Windows starts or after a manual stop.</td></tr>
+<tr><td>Safe stop</td><td>Sends <code>SaveWorld</code> and <code>DoExit</code> through password-protected local RCON.</td><td>Before shutting down Windows or editing advanced files.</td></tr>
+<tr><td>Restart</td><td>Broadcasts warnings at 60, 30, and 10 seconds, then safely stops and starts.</td><td>After changing rates, map, mods, passwords, or important settings.</td></tr>
+<tr><td>Update + restart</td><td>Stops, validates SteamCMD App <code>2430930</code>, then starts.</td><td>When clients report a version mismatch.</td></tr>
+<tr><td>Safe backup</td><td>Makes a consistent dated backup.</td><td>Before large changes or whenever you want a restore point.</td></tr>
+<tr><td>Save basic settings</td><td>Saves server name, map, player limit, basic rates, and mod IDs.</td><td>Always press this before Restart.</td></tr>
+<tr><td>Guided rates</td><td>Explains and edits progression, breeding, taming, and gathering.</td><td>When the game feels too slow or too fast.</td></tr>
+<tr><td>Manage mods</td><td>Adds, removes, and reorders reviewed CurseForge ASA Project IDs.</td><td>Use only cross-platform mods for PS5.</td></tr>
+<tr><td>Important server settings</td><td>PvE, pickup, carry, join password, and admin password.</td><td>Private-server rules and passwords.</td></tr>
+<tr><td>PS5 admin + performance help</td><td>Copies commands and manages permanent admin IDs.</td><td>Admin and FPS controls.</td></tr>
+<tr><td>Open advanced INI files</td><td>Opens the real ASA WindowsServer config folder.</td><td>Advanced changes only; stop ASA first.</td></tr>
+</tbody></table>
+<p class="muted">The manager never changes Windows Firewall or your router. Passwords remain in the local ASA configuration and are not shown in this guide.</p>
+</section>
+
+<section class="card" id="ps5">
+<h2>Joining from PS5 and using admin</h2>
+<h3>Find the server</h3>
+<ol><li>Wait until the manager says <b>ONLINE</b>.</li><li>Open ASA on PS5 → <b>Join Game</b> → <b>Unofficial</b>.</li><li>Enable the player-server and modded-server filters if shown.</li><li>Search for <code>Gustavs ASA Server</code>, refresh, and join.</li><li>PS5 downloads required cross-platform mods automatically. Let every download finish.</li></ol>
+<h3>Permanent admin</h3>
+<p>Your verified 32-character ASA EOS account ID is stored locally in ASA's native <code>ShooterGame/Saved/AllowedCheaterAccountIDs.txt</code> whitelist. The guide deliberately does not print the ID. If automatic admin is unavailable, enter <code>enablecheats &lt;admin password&gt;</code> once after joining.</p>
+<ol><li>Join and wait 30 seconds.</li><li>Open the console from the pause menu.</li><li>Enter <code>cheat fly</code>. Use <code>cheat walk</code> to land.</li></ol>
+<div class="callout"><code>ShowMyAdminManager</code> is not a reliable PS5 test. Flying without first entering the password is the clear permanent-admin test.</div>
+<p>If permanent admin ever fails, use the manager's <b>PS5 admin + performance help → Copy admin login</b>. Never share that copied password command with another player.</p>
+<h3>FPS controls</h3>
+<p>The B+ Menu mod provides the in-game FPS toggle. Your maximum preset disables clouds, fog, Lumen indirect light/reflections, grass, water reflections, and shadows. It raised the tested PS5 result from about 24 FPS to above 60 FPS. Use the reset option when you want normal visuals.</p>
+</section>
+
+<section class="card" id="settings">
+<h2>Current settings, rates, and maps</h2>
+<table><tbody>
+<tr><th>Map</th><td>Aberration (<code>Aberration_WP</code>)</td></tr><tr><th>Players</th><td>10 maximum</td></tr><tr><th>XP</th><td>2×</td></tr><tr><th>Harvest</th><td>3×</td></tr><tr><th>Taming</th><td>3×</td></tr><tr><th>Player food / water drain</th><td>0.5× / 0.5× (hunger and thirst drain at half speed)</td></tr><tr><th>Egg hatch / baby mature</th><td>20× / 20×</td></tr><tr><th>Mating interval</th><td>0.05× (much shorter wait)</td></tr><tr><th>Imprinting</th><td>One successful imprint gives 100%</td></tr><tr><th>Autosave</th><td>Every 15 minutes</td></tr>
+</tbody></table>
+<h3>Change rates safely</h3>
+<ol><li>Open <b>Guided rates</b>.</li><li>Choose a preset or adjust values.</li><li>Press <b>Save rates</b>.</li><li>Restart when everyone is out.</li><li>Test one harvest, tame, and breeding cycle before increasing values again.</li></ol>
+<p><b>Multiplier rule:</b> larger XP/harvest/taming/maturation values make those actions faster. A smaller mating interval means less waiting. Extreme values can skip breeding interactions or make progression meaningless.</p>
+<h3>Change map safely</h3>
+<ol><li>Ask everyone to leave.</li><li>Press <b>Safe backup</b>.</li><li>Select the map in <b>Easy server settings</b>.</li><li>Press <b>Save basic settings</b>, then <b>Restart</b>.</li></ol>
+<div class="callout">Changing maps does not delete Aberration. Each map keeps its own save folder. Characters/items do not automatically transfer unless cluster transfer is deliberately configured later.</div>
+</section>
+
+<section class="card" id="mods">
+<h2>Mods</h2>
+<p>Current load order:</p>
+<ol><li><b>TG Stacking Mod 1000-50</b> — <code>929800</code></li><li><b>B+ Menu</b> — <code>1339012</code></li><li><b>Auto Engrams!</b> — <code>953154</code></li><li><b>Custom Dino Levels</b> — <code>928708</code></li><li><b>Cybers Structures QoL+</b> — <code>940975</code></li><li><b>Pelayori's Cryo Storage</b> — <code>928793</code></li><li><b>Solo Farm</b> — <code>928501</code></li><li><b>Awesome Spyglass</b> — <code>947033</code></li><li><b>Awesome ARK Tools</b> — <code>941450</code></li></ol>
+<h3>Add or remove a mod</h3>
+<ol><li>Confirm it is for <b>ARK: Survival Ascended</b>, not Survival Evolved.</li><li>Confirm the CurseForge page says <b>Cross-Platform</b> or supports PS5.</li><li>Read dependencies, required load order, map limits, and uninstall instructions.</li><li>Press <b>Safe backup</b>.</li><li>Use <b>Manage mods</b>, enter the numeric Project ID, and save.</li><li>Restart and wait for the manager/server log to show every mod as valid.</li><li>Join from PS5 and test the changed feature.</li></ol>
+<div class="callout danger"><b>Removing structure, stack, cryopod, or creature mods can destroy converted items or structures.</b> Read the mod author's uninstall instructions and keep the pre-change backup.</div>
+<p>Add large mods in small batches. When something breaks, the most recently added mod is the first suspect.</p>
+</section>
+
+<section class="card" id="safety">
+<h2>Saves, backups, updates, and daily maintenance</h2>
+<h3>Automatic protection</h3>
+<ul><li>ASA autosaves every 15 minutes.</li><li>ASA keeps recovery data including <code>.arkrbf</code> files.</li><li>Windows Scheduled Task <code>Gustav ASA Daily Maintenance</code> runs daily at 04:00.</li><li>Connected players receive large restart broadcasts at 60, 30, and 10 seconds before any manager restart, update, backup restart, or daily maintenance. If nobody is connected, the delay is skipped.</li><li>Maintenance safely stops, verifies a backup, updates App <code>2430930</code>, keeps the newest 14 daily backups, restarts, validates mods, and wipes <b>wild</b> dinos once.</li><li>The wild-dino wipe happens only on the daily maintenance restart. Manual starts/restarts do not wipe them.</li><li>If ASA was already stopped, maintenance backs it up but does not unexpectedly start it.</li></ul>
+<h3>Before shutting down Windows</h3>
+<ol><li>Ask players to leave.</li><li>Press <b>Safe stop</b>.</li><li>Wait until the manager says <b>OFFLINE</b>.</li><li>Then shut down or restart Windows.</li></ol>
+<h3>Restore a backup</h3>
+<div class="callout warn">Restoring replaces current progress. Keep the current save as another backup first.</div>
+<ol><li>Safe stop ASA.</li><li>Open <b>backups</b> from the manager.</li><li>Choose a dated backup that contains <code>Aberration_WP.ark</code>.</li><li>Copy the current <code>SavedArks\Aberration_WP</code> folder somewhere safe.</li><li>Restore the selected map folder and restart.</li></ol>
+<p>If you are unsure, stop after step 3 and get help. Never delete backups to “make the server see them.”</p>
+</section>
+
+<section class="card" id="network">
+<h2>Network and security</h2>
+<table><thead><tr><th>Item</th><th>Current value</th></tr></thead><tbody>
+<tr><td>Static server PC/router target</td><td><code>192.168.1.179</code> — verified 18 Aug 2026</td></tr><tr><td>Router/Firewall UDP rules</td><td><code>7777</code>, <code>7778</code>, <code>27015</code></td></tr><tr><td>Observed active ASA UDP endpoints</td><td><code>7777</code> and <code>27015</code></td></tr><tr><td>RCON</td><td>TCP <code>27020</code>, used locally for safe shutdown</td></tr><tr><td>RCON exposure</td><td>No Windows inbound allow rule and no router forwarding</td></tr><tr><td>Crossplay launch option</td><td><code>-ServerPlatform=ALL</code></td></tr>
+</tbody></table>
+<div class="callout danger">Do not put TCP 27020 in the router. Do not disable Windows Firewall, and do not expose the admin password. The working port-forward rules should be left alone unless the PC's LAN address changes.</div>
+<p>Windows now uses a static address, preserving the existing forwarding rules. If the router is replaced or its subnet changes, update the static Windows address, forwarding target, and <code>SERVER_IP</code> together.</p>
+</section>
+
+<section class="card" id="trouble">
+<h2>Troubleshooting</h2>
+<details open><summary>Server does not appear on PS5</summary><ol><li>Confirm manager says ONLINE.</li><li>Wait two minutes and refresh Unofficial servers.</li><li>Search the exact name and allow modded/player-hosted servers.</li><li>Run the offline advisor.</li><li>Open server logs and confirm “now advertising for join.”</li><li>Do not repeatedly change router rules while the server is known to have worked.</li></ol></details>
+<details><summary>Connection timeout</summary><p>Confirm Windows still uses <code>192.168.1.179</code>, VPN software is not taking over the server route, UDP forwarding still targets this PC, and ASA is listening on 7777/27015. Restart ASA once after checking—not repeatedly.</p></details>
+<details><summary>Version or mod mismatch</summary><p>Ask players to leave and use <b>Update + restart</b>. Let the server validate every mod. On PS5, allow all mod updates to finish before joining.</p></details>
+<details><summary>Admin command does nothing</summary><p>Wait 30 seconds after joining and try <code>cheat fly</code>. If it fails, use <b>Copy admin login</b>, enter that once, then retry. Check that the exact EOS ID remains in <b>Manage permanent admins</b>.</p></details>
+<details><summary>Server or Windows crashes</summary><p>Restart Windows, open the manager, run the offline advisor, then start ASA. The 15-minute autosave and recovery files should limit rollback. If the world will not load, stop and restore the newest verified daily backup.</p></details>
+<details><summary>High RAM usage</summary><p>Aberration plus nine mods can use substantial RAM. Do not run the full Steam ASA client on this 16 GB server PC at the same time. Use PS5 as the player client.</p></details>
+<details><summary>Daily maintenance result</summary><p>Read <code>DailyMaintenance-last-result.txt</code> for the short result and <code>DailyMaintenance.log</code> for details. A result of 0 in Task Scheduler means success.</p></details>
+</section>
+
+<section class="card" id="files">
+<h2>Important files</h2>
+<p>Press <b>Files + guide</b> at the top of the manager for a description of every important file, its current location, and buttons to open the file or folder directly.</p>
+<table><tbody>
+<tr><th>Main folder</th><td><code>C:\Users\Gustav\Documents\Codex\ASA_Server</code></td></tr>
+<tr><th>Server program</th><td><code>server\ShooterGame\Binaries\Win64\ArkAscendedServer.exe</code></td></tr>
+<tr><th>Basic launch settings</th><td><code>server-config.cmd</code></td></tr>
+<tr><th>Main ASA settings</th><td><code>server\ShooterGame\Saved\Config\WindowsServer\GameUserSettings.ini</code></td></tr>
+<tr><th>Advanced game settings</th><td><code>server\ShooterGame\Saved\Config\WindowsServer\Game.ini</code></td></tr>
+<tr><th>Aberration save</th><td><code>server\ShooterGame\Saved\SavedArks\Aberration_WP\Aberration_WP.ark</code></td></tr>
+<tr><th>Permanent admins</th><td><code>server\ShooterGame\Saved\AllowedCheaterAccountIDs.txt</code></td></tr>
+<tr><th>Current log</th><td><code>server\ShooterGame\Saved\Logs\ShooterGame.log</code></td></tr>
+<tr><th>Backups</th><td><code>backups</code></td></tr>
+<tr><th>Daily maintenance</th><td><code>DailyMaintenance.ps1</code></td></tr>
+<tr><th>Manual scripts</th><td><code>StartServer.bat</code>, <code>StopServer.bat</code>, <code>RestartServer.bat</code>, <code>UpdateServer.bat</code></td></tr>
+</tbody></table>
+<table><thead><tr><th>If you want to change…</th><th>Use this manager page first</th><th>Underlying file</th></tr></thead><tbody>
+<tr><td>XP, harvesting, taming, passive taming, incoming damage, food or water</td><td><b>Guided rates</b></td><td><code>GameUserSettings.ini</code></td></tr>
+<tr><td>Player/dino points per level, breeding, imprinting or day/night</td><td><b>Stats + time</b></td><td><code>Game.ini</code> and <code>GameUserSettings.ini</code></td></tr>
+<tr><td>Map, server name, player limit or mods</td><td><b>Easy server settings</b> / <b>Manage mods</b></td><td><code>server-config.cmd</code></td></tr>
+<tr><td>PvE rules, passwords, autosave, tame limit or CS bed cooldowns</td><td><b>Important server settings</b></td><td><code>GameUserSettings.ini</code> and <code>Game.ini</code></td></tr>
+<tr><td>Custom item crafting costs</td><td><b>Custom crafting costs</b></td><td><code>Game.ini</code></td></tr>
+<tr><td>Permanent admin access</td><td><b>PS5 admin + performance help</b></td><td><code>AllowedCheaterAccountIDs.txt</code></td></tr>
+</tbody></table>
+<p><b>Fast manual navigation:</b> open the correct text file, press <kbd>Ctrl</kbd>+<kbd>F</kbd>, search for the exact setting name, and change only one value at a time. Save, restart ASA, then verify it in game. Never edit world-save files directly.</p>
+<p>Manager writes are atomic, keep a neighboring <code>.bak</code>, and create dated configuration history. Advanced manual edits should still be made only while ASA is stopped.</p>
+</section>
+
+<section class="card" id="cheats">
+<h2>Short cheat sheet</h2>
+<table><thead><tr><th>Goal</th><th>Action or command</th></tr></thead><tbody>
+<tr><td>Start</td><td>Manager → <b>Start server</b></td></tr><tr><td>Stop safely</td><td>Manager → <b>Safe stop</b></td></tr><tr><td>Restart</td><td>Manager → <b>Restart</b></td></tr><tr><td>Update</td><td>Manager → <b>Update + restart</b></td></tr><tr><td>Change map</td><td>Safe backup → choose map → Save basic settings → Restart</td></tr><tr><td>Change rates</td><td>Guided rates → Save rates → Restart</td></tr><tr><td>Add/remove mods</td><td>Safe backup → Manage mods → Save → Restart → verify</td></tr><tr><td>Temporary admin login</td><td>Manager → PS5 help → Copy admin login</td></tr><tr><td>Fly / stop flying</td><td><code>cheat fly</code> / <code>cheat walk</code></td></tr><tr><td>God mode</td><td><code>cheat god</code></td></tr><tr><td>Infinite stats</td><td><code>cheat infinitestats</code></td></tr><tr><td>Save immediately</td><td><code>cheat SaveWorld</code></td></tr><tr><td>Reset wild dinos</td><td><code>cheat DestroyWildDinos</code></td></tr><tr><td>Creative mode</td><td><code>cheat gcm</code></td></tr><tr><td>Return from spectator</td><td>Use the correct player/admin command carefully; make a save first.</td></tr><tr><td>Back up</td><td>Manager → <b>Safe backup</b></td></tr>
+</tbody></table>
+<div class="callout warn">Commands can permanently delete creatures, structures, tribes, or progress. If a command includes <code>Destroy</code>, <code>Kill</code>, <code>Tribe</code>, or <code>Delete</code>, back up and verify the exact command first.</div>
+</section>
+
+<footer>This file works offline. Open it from the ASA Server Manager. It contains no password or private account ID.</footer>
+</main>
+</body>
+</html>
