@@ -28,6 +28,20 @@ $script:AllowedSettings = [ordered]@{
     DayCycleSpeedScale                   = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=10.0;  Note='Higher makes the whole day/night cycle pass faster.' }
     DayTimeSpeedScale                    = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=10.0;  Note='Lower makes daylight last longer.' }
     NightTimeSpeedScale                  = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=10.0;  Note='Higher makes nighttime pass faster.' }
+    OverrideOfficialDifficulty           = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.2;  Max=5.0;   Note='Controls max wild dino level, roughly level = value x 30. 5.0 is official-server max (level 150).' }
+    SupplyCrateLootQualityMultiplier     = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.5;  Max=10.0;  Note='Higher gives better-quality loot in supply crates (does not change how often crates spawn).' }
+    AutoSavePeriodMinutes                = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=1;    Max=60.0;  Note='Lower saves the world more often (more crash protection, slightly more disk activity).' }
+    'PerLevelStatsMultiplier_DinoWild[0]'   = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=3.0; Note='Wild dino health gained per level. Lower makes high-level wild dinos less tanky.' }
+    'PerLevelStatsMultiplier_DinoWild[8]'   = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=3.0; Note='Wild dino melee damage gained per level. Lower makes high-level wild dinos hit less hard.' }
+    'PerLevelStatsMultiplier_Player[8]'     = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=5.0; Note='Player melee damage gained per level put into Melee Damage.' }
+    'PerLevelStatsMultiplier_Player[9]'     = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=5.0; Note='Player movement speed gained per level put into Speed.' }
+    'PerLevelStatsMultiplier_Player[11]'    = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=5.0; Note='Player crafting-speed stat gained per level put into Crafting Speed.' }
+    DinoCountMultiplier                     = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1; Max=5.0; Note='How many wild dinos spawn on the map overall. 1.0 is standard density.' }
+    DinoCharacterHealthRecoveryMultiplier    = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1; Max=20.0; Note='How fast dinos regenerate lost health over time. Affects wild and tamed dinos together.' }
+    'PerLevelStatsMultiplier_DinoTamed[0]'  = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=5.0; Note='Tamed dino health gained per level.' }
+    'PerLevelStatsMultiplier_DinoTamed[8]'  = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=5.0; Note='Tamed dino melee damage gained per level.' }
+    WantsEqualLevels                     = @{ TargetFile='GameUserSettings.ini'; Section='[CustomLevelDistrib]'; Type='Boolean'; Note='Custom Dino Levels mod: every wild dino level equally likely. Mutually exclusive with WantsHighLevels.' }
+    WantsHighLevels                       = @{ TargetFile='GameUserSettings.ini'; Section='[CustomLevelDistrib]'; Type='Boolean'; Note='Custom Dino Levels mod: skews wild dino spawns toward the higher end of the level range. Mutually exclusive with WantsEqualLevels.' }
 }
 
 $script:AllowedActions = [ordered]@{
@@ -124,22 +138,35 @@ function ConvertTo-AsaValidatedProposal {
 
         $meta = $script:AllowedSettings[$key]
         $rawValue = [string]$change.value
-        [decimal]$value = 0
-        $parsed = [decimal]::TryParse(
-            $rawValue,
-            [Globalization.NumberStyles]::Float,
-            [Globalization.CultureInfo]::InvariantCulture,
-            [ref]$value
-        )
 
-        if (-not $parsed) {
-            $rejected.Add("Invalid numeric value for ${key}: $rawValue")
-            continue
+        Remove-Variable -Name value, numericValue -ErrorAction SilentlyContinue
+
+        if ([string]$meta.Type -ceq 'Boolean') {
+            if ($rawValue -inotin @('True', 'False')) {
+                $rejected.Add("Invalid boolean value for ${key}: $rawValue (must be True or False)")
+                continue
+            }
+            $value = if ($rawValue -ieq 'True') { 'True' } else { 'False' }
         }
+        else {
+            [decimal]$numericValue = 0
+            $parsed = [decimal]::TryParse(
+                $rawValue,
+                [Globalization.NumberStyles]::Float,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [ref]$numericValue
+            )
 
-        if ($value -lt [decimal]$meta.Min -or $value -gt [decimal]$meta.Max) {
-            $rejected.Add("Out-of-range value for ${key}: $value (allowed $($meta.Min)-$($meta.Max))")
-            continue
+            if (-not $parsed) {
+                $rejected.Add("Invalid numeric value for ${key}: $rawValue")
+                continue
+            }
+
+            if ($numericValue -lt [decimal]$meta.Min -or $numericValue -gt [decimal]$meta.Max) {
+                $rejected.Add("Out-of-range value for ${key}: $numericValue (allowed $($meta.Min)-$($meta.Max))")
+                continue
+            }
+            $value = $numericValue
         }
 
         $validated.Add([pscustomobject]@{
@@ -218,7 +245,8 @@ function Test-AsaAiApplyProposal {
         $section = [string]$meta.Section
         $metadataAllowed = (
             ($targetFile -ceq 'GameUserSettings.ini' -and $section -ceq '[ServerSettings]') -or
-            ($targetFile -ceq 'Game.ini' -and $section -ceq '[/Script/ShooterGame.ShooterGameMode]')
+            ($targetFile -ceq 'Game.ini' -and $section -ceq '[/Script/ShooterGame.ShooterGameMode]') -or
+            ($targetFile -ceq 'GameUserSettings.ini' -and $section -ceq '[CustomLevelDistrib]')
         )
         if (-not $metadataAllowed) {
             $errors.Add("Blocked metadata for setting: ${key}")
@@ -226,22 +254,34 @@ function Test-AsaAiApplyProposal {
         }
 
         $rawValue = [string]$change.Value
-        [decimal]$value = 0
-        $parsed = [decimal]::TryParse(
-            $rawValue,
-            [Globalization.NumberStyles]::Float,
-            [Globalization.CultureInfo]::InvariantCulture,
-            [ref]$value
-        )
+        Remove-Variable -Name value, numericValue -ErrorAction SilentlyContinue
 
-        if (-not $parsed) {
-            $errors.Add("Invalid numeric value for ${key}: $rawValue")
-            continue
+        if ([string]$meta.Type -ceq 'Boolean') {
+            if ($rawValue -inotin @('True', 'False')) {
+                $errors.Add("Invalid boolean value for ${key}: $rawValue (must be True or False)")
+                continue
+            }
+            $value = if ($rawValue -ieq 'True') { 'True' } else { 'False' }
         }
+        else {
+            [decimal]$numericValue = 0
+            $parsed = [decimal]::TryParse(
+                $rawValue,
+                [Globalization.NumberStyles]::Float,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [ref]$numericValue
+            )
 
-        if ($value -lt [decimal]$meta.Min -or $value -gt [decimal]$meta.Max) {
-            $errors.Add("Out-of-range value for ${key}: $value (allowed $($meta.Min)-$($meta.Max))")
-            continue
+            if (-not $parsed) {
+                $errors.Add("Invalid numeric value for ${key}: $rawValue")
+                continue
+            }
+
+            if ($numericValue -lt [decimal]$meta.Min -or $numericValue -gt [decimal]$meta.Max) {
+                $errors.Add("Out-of-range value for ${key}: $numericValue (allowed $($meta.Min)-$($meta.Max))")
+                continue
+            }
+            $value = $numericValue
         }
 
         $changes.Add([pscustomobject]@{
@@ -249,6 +289,7 @@ function Test-AsaAiApplyProposal {
             Value      = $value
             TargetFile = $targetFile
             Section    = $section
+            Reason     = [string]$change.Reason
         })
     }
 
@@ -326,6 +367,51 @@ function Set-AsaIniValueInMemory {
     return [string[]]$copy.ToArray()
 }
 
+function Get-AsaIniValueFromLines {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines,
+        [Parameter(Mandatory)][string]$Section,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    $sectionIndex = -1
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i].Trim() -ieq $Section) { $sectionIndex = $i; break }
+    }
+    if ($sectionIndex -lt 0) { return $null }
+
+    $nextSectionIndex = $Lines.Count
+    for ($i = $sectionIndex + 1; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i].Trim() -match '^\[[^\]]+\]$') { $nextSectionIndex = $i; break }
+    }
+
+    $keyPattern = '^\s*' + [regex]::Escape($Key) + '\s*='
+    for ($i = $sectionIndex + 1; $i -lt $nextSectionIndex; $i++) {
+        if ($Lines[$i] -match $keyPattern) {
+            return $Lines[$i].Substring($Lines[$i].IndexOf('=') + 1)
+        }
+    }
+    return $null
+}
+
+function Add-AsaChangelogEntry {
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$NewValue,
+        [string]$OldValue = '(not previously set)',
+        [Parameter(Mandatory)][string]$TargetFile,
+        [string]$Reason = '',
+        [string]$BackupPath = ''
+    )
+
+    $changelogPath = Join-Path $PSScriptRoot 'SETTINGS-CHANGELOG.md'
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "- **$timestamp** &mdash; ``$Key`` in $TargetFile`: ``$OldValue`` -> ``$NewValue``."
+    if ($Reason) { $line += " Reason: $Reason" }
+    if ($BackupPath) { $line += " Backup: ``$BackupPath``" }
+    Add-Content -LiteralPath $changelogPath -Value $line -Encoding utf8
+}
+
 function Get-AsaAiFixedConfigPaths {
     $configRoot = Join-Path $PSScriptRoot 'server\ShooterGame\Saved\Config\WindowsServer'
     return [pscustomobject]@{
@@ -361,20 +447,30 @@ function New-AsaAiPreparedApply {
         [string[]]$gameIniLines = [IO.File]::ReadAllLines($paths.GameIni)
         $writeGameUserSettings = $false
         $writeGameIni = $false
+        $changesWithOldValues = New-Object System.Collections.Generic.List[object]
 
         foreach ($change in $validated.Changes) {
-            $valueText = ([decimal]$change.Value).ToString([Globalization.CultureInfo]::InvariantCulture)
+            $valueText = if ([string]$change.Value -in @('True', 'False')) { [string]$change.Value } else { ([decimal]$change.Value).ToString([Globalization.CultureInfo]::InvariantCulture) }
             if ($change.TargetFile -ceq 'GameUserSettings.ini') {
+                $oldValue = Get-AsaIniValueFromLines -Lines $gameUserLines -Section $change.Section -Key $change.Key
                 $gameUserLines = Set-AsaIniValueInMemory -Lines $gameUserLines -Section $change.Section -Key $change.Key -Value $valueText
                 $writeGameUserSettings = $true
             }
             elseif ($change.TargetFile -ceq 'Game.ini') {
+                $oldValue = Get-AsaIniValueFromLines -Lines $gameIniLines -Section $change.Section -Key $change.Key
                 $gameIniLines = Set-AsaIniValueInMemory -Lines $gameIniLines -Section $change.Section -Key $change.Key -Value $valueText
                 $writeGameIni = $true
             }
             else {
                 throw "Blocked target file for setting: $($change.Key)"
             }
+            $changesWithOldValues.Add([pscustomobject]@{
+                Key        = $change.Key
+                Value      = $change.Value
+                OldValue   = if ($null -ne $oldValue) { $oldValue } else { '(not previously set)' }
+                TargetFile = $change.TargetFile
+                Reason     = $change.Reason
+            })
         }
     }
     catch {
@@ -389,6 +485,7 @@ function New-AsaAiPreparedApply {
         Success               = $true
         Error                 = ''
         Changes               = $validated.Changes
+        ChangesWithOldValues  = $changesWithOldValues.ToArray()
         GameUserSettingsPath  = $paths.GameUserSettings
         GameIniPath           = $paths.GameIni
         BackupRoot            = $paths.BackupRoot
@@ -551,6 +648,13 @@ function Invoke-AsaAiApplyProposal {
         }
     }
 
+    foreach ($change in $prepared.ChangesWithOldValues) {
+        try {
+            Add-AsaChangelogEntry -Key $change.Key -NewValue ([string]$change.Value) -OldValue ([string]$change.OldValue) -TargetFile $change.TargetFile -Reason $change.Reason -BackupPath $backupPath
+        }
+        catch { }
+    }
+
     return [pscustomobject]@{
         Success    = $true
         Message    = "Applied $($prepared.Changes.Count) validated setting(s)."
@@ -611,6 +715,8 @@ Return only JSON matching the supplied schema.
 Every numeric value must be a plain invariant decimal string such as "4", "0.5", or "12.0". Do not include x, %, units, or explanatory text in value.
 If the request cannot be satisfied using only the allow-lists, return empty changes and actions arrays and explain why in summary.
 When a user asks for shorter nights, increase NightTimeSpeedScale. When a user asks for longer days, decrease DayTimeSpeedScale.
+When wild dinos feel too high-level or too tanky/aggressive, decrease OverrideOfficialDifficulty (and optionally PerLevelStatsMultiplier_DinoWild[0]/[8] to soften their health/damage growth per level), rather than touching an unrelated setting.
+When a player says leveling up doesn't feel impactful, raise the relevant PerLevelStatsMultiplier_Player[N] instead of XPMultiplier (XP only controls how fast you reach a level, not what each level gives you).
 When a user asks to start, stop, restart, update, or back up the server, use the matching action instead of a setting. You do not need to separately request a stop or start around a settings change: the system already stops the server before writing settings and restarts it afterward if it was running.
 
 Allowed settings:
