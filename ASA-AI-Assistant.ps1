@@ -121,9 +121,22 @@ function Invoke-AsaAiServerAction {
 }
 
 function Get-AsaAiAllowedSettingText {
+    $paths = Get-AsaAiFixedConfigPaths
+    $gameUserLines = if (Test-Path -LiteralPath $paths.GameUserSettings) { [IO.File]::ReadAllLines($paths.GameUserSettings) } else { @() }
+    $gameIniLines = if (Test-Path -LiteralPath $paths.GameIni) { [IO.File]::ReadAllLines($paths.GameIni) } else { @() }
+
     $lines = foreach ($key in $script:AllowedSettings.Keys) {
         $meta = $script:AllowedSettings[$key]
-        "- ${key}: range $($meta.Min) to $($meta.Max). $($meta.Note)"
+        $sourceLines = if ($meta.TargetFile -ceq 'GameUserSettings.ini') { $gameUserLines } else { $gameIniLines }
+        $current = Get-AsaIniValueFromLines -Lines $sourceLines -Section $meta.Section -Key $key
+        $currentText = if ($null -ne $current -and [string]$current -ne '') { [string]$current } else { 'not set (game uses its own default)' }
+
+        if ([string]$meta.Type -ceq 'Boolean') {
+            "- ${key}: CURRENT VALUE = $currentText. True/False. $($meta.Note)"
+        }
+        else {
+            "- ${key}: CURRENT VALUE = $currentText. Allowed range $($meta.Min) to $($meta.Max). $($meta.Note)"
+        }
     }
     return ($lines -join "`n")
 }
@@ -719,6 +732,7 @@ You may ONLY propose settings from the allow-list below, and ONLY trigger operat
 Return only JSON matching the supplied schema.
 Every numeric value must be a plain invariant decimal string such as "4", "0.5", or "12.0". Do not include x, %, units, or explanatory text in value.
 If the request cannot be satisfied using only the allow-lists, return empty changes and actions arrays and explain why in summary.
+Each allowed setting below shows its CURRENT VALUE, which is the server's actual live value right now, not a vanilla default. For any relative request (boost/increase/lower/reduce/further/more/less/faster/slower/higher/lower), you MUST calculate the new value starting from that CURRENT VALUE, never from 1.0 or any other assumed baseline. Example: if a setting's CURRENT VALUE is 30.2 and the user asks to "boost it further", propose something meaningfully above 30.2 (for example 40 or 45), never a small number like 2 just because it looks like a big multiplier in isolation -- 2 would be a severe cut from 30.2, not a boost. If you are not given a specific target number, pick a value roughly 20-50% above (or below, for a reduction request) the CURRENT VALUE shown, staying within the allowed range.
 When a user asks for shorter nights, increase NightTimeSpeedScale. When a user asks for longer days, decrease DayTimeSpeedScale.
 When wild dinos feel too high-level or too tanky/aggressive, decrease OverrideOfficialDifficulty (and optionally PerLevelStatsMultiplier_DinoWild[0]/[8] to soften their health/damage growth per level), rather than touching an unrelated setting.
 When a player says leveling up doesn't feel impactful, raise the relevant PerLevelStatsMultiplier_Player[N] instead of XPMultiplier (XP only controls how fast you reach a level, not what each level gives you).
