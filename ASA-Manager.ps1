@@ -682,7 +682,7 @@ function Show-AdminManager {
 function Show-RatesDialog {
     $dialog = New-Object Windows.Forms.Form
     $dialog.Text = 'Guided rates - ASA Manager'
-    $dialog.Size = New-Object Drawing.Size(820, 900)
+    $dialog.Size = New-Object Drawing.Size(820, 980)
     $dialog.StartPosition = 'CenterParent'
     $dialog.BackColor = $Background
     $dialog.ForeColor = $Text
@@ -709,7 +709,10 @@ function Show-RatesDialog {
         @{ Key='BabyMatureSpeedMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Baby maturation'; Default='1.0'; Min=0.1; Max=100; Explain='Higher makes baby creatures reach adulthood faster.' },
         @{ Key='BabyCuddleIntervalMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Imprint interval'; Default='1.0'; Min=0.01; Max=10; Explain='Lower requests imprint care more often. Keep this roughly inverse to maturation speed.' },
         @{ Key='BabyImprintAmountMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Imprint per care'; Default='1.0'; Min=0.1; Max=100; Explain='Higher gives more imprint progress per care. 100 makes the first successful care reach 100%.' },
-        @{ Key='CropGrowthSpeedMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Crop growth'; Default='1.0'; Min=0.1; Max=100; Explain='Higher makes crops grow faster.' }
+        @{ Key='CropGrowthSpeedMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Crop growth'; Default='1.0'; Min=0.1; Max=100; Explain='Higher makes crops grow faster.' },
+        @{ Key='StructureResistanceMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Structure toughness'; Default='1.0'; Min=0.05; Max=5; Explain='Lower makes structures take less damage. 0.5 means roughly half damage; 0.1 is nearly indestructible.' },
+        @{ Key='DinoCharacterFoodDrainMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Dino food drain'; Default='1.0'; Min=0.1; Max=10; Explain='Lower means dinos get hungry more slowly (wild and tamed).' },
+        @{ Key='DinoCharacterStaminaDrainMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Dino stamina drain'; Default='1.0'; Min=0.1; Max=10; Explain='Lower means dinos tire out more slowly while sprinting or flying.' }
     )
 
     $rateControls = @{}
@@ -733,11 +736,11 @@ function Show-RatesDialog {
         $y += 45
     }
 
-    $officialButton = New-Button 'Official 1x preset' 20 770 130 ([Drawing.Color]::FromArgb(79, 99, 125))
-    $relaxedButton = New-Button 'Relaxed private preset' 158 770 150 $Green
-    $noWipeButton = New-Button 'Balanced No-Wipe' 316 770 145 ([Drawing.Color]::FromArgb(46, 150, 145))
-    $fastButton = New-Button 'Fast private preset' 469 770 135 $Amber
-    $saveRatesButton = New-Button 'Save rates' 612 770 170 $Blue
+    $officialButton = New-Button 'Official 1x preset' 20 905 130 ([Drawing.Color]::FromArgb(79, 99, 125))
+    $relaxedButton = New-Button 'Relaxed private preset' 158 905 150 $Green
+    $noWipeButton = New-Button 'Balanced No-Wipe' 316 905 145 ([Drawing.Color]::FromArgb(46, 150, 145))
+    $fastButton = New-Button 'Fast private preset' 469 905 135 $Amber
+    $saveRatesButton = New-Button 'Save rates' 612 905 170 $Blue
     $dialog.Controls.AddRange(@($officialButton, $relaxedButton, $noWipeButton, $fastButton, $saveRatesButton))
 
     $officialButton.Add_Click({
@@ -936,7 +939,7 @@ function Show-CraftingCostsDialog {
 function Show-ProgressionDialog {
     $dialog = New-Object Windows.Forms.Form
     $dialog.Text = 'Progression and world time - ASA Manager'
-    $dialog.Size = New-Object Drawing.Size(840, 900)
+    $dialog.Size = New-Object Drawing.Size(840, 950)
     $dialog.StartPosition = 'CenterParent'
     $dialog.BackColor = $Background
     $dialog.ForeColor = $Text
@@ -952,6 +955,7 @@ function Show-ProgressionDialog {
         @{ Key='KillXPMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Kill XP'; Base=1.0; Min=0.1; Max=20; Explain='XP awarded for kills. This stacks with the main XP rate.' },
         @{ Key='PerLevelStatsMultiplier_Player[1]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player stamina / level'; Base=1.0; Min=0.1; Max=20; Explain='Stamina gained whenever a player spends one level point.' },
         @{ Key='PerLevelStatsMultiplier_Player[7]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player weight / level'; Base=1.0; Min=0.1; Max=20; Explain='Weight gained whenever a player spends one level point.' },
+        @{ Key='PerLevelStatsMultiplier_Player[8]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player melee / level'; Base=1.0; Min=0.1; Max=20; Explain='Melee damage gained whenever a player spends one level point.' },
         @{ Key='PerLevelStatsMultiplier_Player[11]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player crafting / level'; Base=1.0; Min=0.1; Max=20; Explain='Crafting skill gained whenever a player spends one level point.' },
         @{ Key='PerLevelStatsMultiplier_Player[9]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player movement / level'; Base=1.0; Min=0.1; Max=20; Explain='1.0 is about +1.5% movement per point. Native ASA has no hard maximum for this stat.' },
         @{ Key='PerLevelStatsMultiplier_Player[10]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player fortitude / level'; Base=1.0; Min=0.1; Max=20; Explain='Fortitude gained per point: improves heat, cold, disease and knockout resistance.' },
@@ -990,21 +994,22 @@ function Show-ProgressionDialog {
 
     $speedCheck = New-Object Windows.Forms.CheckBox
     $speedCheck.Text = 'Allow native movement-speed leveling (players and non-flyers; no hard cap)'
-    $speedCheck.Location = New-Object Drawing.Point(22, 730)
+    $speedCheck.Location = New-Object Drawing.Point(22, 779)
     $speedCheck.Size = New-Object Drawing.Size(650, 28)
     $speedCheck.ForeColor = $Text
     $speedCheck.Checked = ([string](Read-CmdConfig)['ALLOW_SPEED_LEVELING']) -ieq 'True'
     $dialog.Controls.Add($speedCheck)
 
-    $vanillaButton = New-Button 'Set all to vanilla 1x' 22 775 180 ([Drawing.Color]::FromArgb(79, 99, 125))
-    $balancedButton = New-Button 'Balanced private preset' 216 775 190 $Green
-    $saveButton = New-Button 'Save progression + time' 584 775 220 $Blue
+    $vanillaButton = New-Button 'Set all to vanilla 1x' 22 824 180 ([Drawing.Color]::FromArgb(79, 99, 125))
+    $balancedButton = New-Button 'Balanced private preset' 216 824 190 $Green
+    $saveButton = New-Button 'Save progression + time' 584 824 220 $Blue
     $dialog.Controls.AddRange(@($vanillaButton, $balancedButton, $saveButton))
     $vanillaButton.Add_Click({ foreach ($control in $controls.Values) { $control.Value = 1.0 }; $speedCheck.Checked = $false })
     $balancedButton.Add_Click({
         $controls['KillXPMultiplier'].Value = 1.25
         $controls['PerLevelStatsMultiplier_Player[1]'].Value = 2.0
         $controls['PerLevelStatsMultiplier_Player[7]'].Value = 3.0
+        $controls['PerLevelStatsMultiplier_Player[8]'].Value = 1.6
         $controls['PerLevelStatsMultiplier_Player[11]'].Value = 1.5
         $controls['PerLevelStatsMultiplier_Player[9]'].Value = 1.0
         $controls['PerLevelStatsMultiplier_Player[10]'].Value = 3.0

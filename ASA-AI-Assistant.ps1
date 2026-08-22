@@ -2,7 +2,8 @@ param(
     [string]$Prompt,
     [string]$Model = 'qwen3:8b',
     [string]$OllamaBaseUrl = 'http://127.0.0.1:11434',
-    [switch]$Execute
+    [switch]$Execute,
+    [switch]$TestConnection
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +43,10 @@ $script:AllowedSettings = [ordered]@{
     'PerLevelStatsMultiplier_DinoTamed[8]'  = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=5.0; Note='Tamed dino melee damage gained per level.' }
     WantsEqualLevels                     = @{ TargetFile='GameUserSettings.ini'; Section='[CustomLevelDistrib]'; Type='Boolean'; Note='Custom Dino Levels mod: every wild dino level equally likely. Mutually exclusive with WantsHighLevels.' }
     WantsHighLevels                       = @{ TargetFile='GameUserSettings.ini'; Section='[CustomLevelDistrib]'; Type='Boolean'; Note='Custom Dino Levels mod: skews wild dino spawns toward the higher end of the level range. Mutually exclusive with WantsEqualLevels.' }
+    StructureResistanceMultiplier          = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.05; Max=5.0; Note='Lower makes structures take less damage. 1.0 is vanilla, 0.1 is nearly indestructible.' }
+    DinoCharacterFoodDrainMultiplier        = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1; Max=10.0; Note='Lower means dinos (wild and tamed) get hungry more slowly.' }
+    DinoCharacterStaminaDrainMultiplier     = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1; Max=10.0; Note='Lower means dinos tire out more slowly while sprinting or flying.' }
+    PvEDinoDecayPeriodMultiplier            = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1; Max=10.0; Note='In PvE, lower makes dinos left by an absent tribe decay/die off sooner.' }
 }
 
 $script:AllowedActions = [ordered]@{
@@ -812,7 +817,58 @@ function Invoke-AsaAiRequest {
     }
 }
 
-if ($Prompt -and $Execute) {
+function Test-AsaAiConnection {
+    param(
+        [string]$Model = 'qwen3:8b',
+        [string]$OllamaBaseUrl = 'http://127.0.0.1:11434'
+    )
+
+    $steps = New-Object System.Collections.Generic.List[object]
+    $baseUrl = $OllamaBaseUrl.TrimEnd('/')
+
+    try {
+        $tags = Invoke-RestMethod -Uri "$baseUrl/api/tags" -Method Get -TimeoutSec 10
+        $steps.Add([pscustomobject]@{ Step = 'Ollama reachable'; Success = $true; Message = "Connected to $baseUrl." })
+    }
+    catch {
+        $steps.Add([pscustomobject]@{ Step = 'Ollama reachable'; Success = $false; Message = "Could not reach Ollama at $baseUrl. Is Ollama running? $($_.Exception.Message)" })
+        return [pscustomobject]@{ Success = $false; Steps = $steps.ToArray() }
+    }
+
+    $installedModels = @($tags.models | ForEach-Object { [string]$_.name })
+    $modelPresent = $installedModels -contains $Model -or (@($installedModels | Where-Object { $_ -like "$Model*" })).Count -gt 0
+    if ($modelPresent) {
+        $steps.Add([pscustomobject]@{ Step = 'Model installed'; Success = $true; Message = "Model '$Model' is available." })
+    }
+    else {
+        $installedText = if ($installedModels.Count -gt 0) { $installedModels -join ', ' } else { '(none installed)' }
+        $steps.Add([pscustomobject]@{ Step = 'Model installed'; Success = $false; Message = "Model '$Model' was not found. Installed: $installedText. Run: ollama pull $Model" })
+        return [pscustomobject]@{ Success = $false; Steps = $steps.ToArray() }
+    }
+
+    try {
+        $proposal = Get-AsaAiProposal -Prompt 'Set XP to 2' -Model $Model -OllamaBaseUrl $OllamaBaseUrl
+        if (@($proposal.Changes).Count -gt 0) {
+            $change = @($proposal.Changes)[0]
+            $steps.Add([pscustomobject]@{ Step = 'Round-trip test'; Success = $true; Message = "Model responded correctly: proposed $($change.Key) = $($change.Value). Nothing was written (preview only)." })
+        }
+        else {
+            $steps.Add([pscustomobject]@{ Step = 'Round-trip test'; Success = $false; Message = "Model responded but did not propose the expected setting. Raw summary: $($proposal.Summary)" })
+            return [pscustomobject]@{ Success = $false; Steps = $steps.ToArray() }
+        }
+    }
+    catch {
+        $steps.Add([pscustomobject]@{ Step = 'Round-trip test'; Success = $false; Message = "Model call failed: $($_.Exception.Message)" })
+        return [pscustomobject]@{ Success = $false; Steps = $steps.ToArray() }
+    }
+
+    return [pscustomobject]@{ Success = $true; Steps = $steps.ToArray() }
+}
+
+if ($TestConnection) {
+    Test-AsaAiConnection -Model $Model -OllamaBaseUrl $OllamaBaseUrl | ConvertTo-Json -Depth 6
+}
+elseif ($Prompt -and $Execute) {
     Invoke-AsaAiRequest -Prompt $Prompt -Model $Model -OllamaBaseUrl $OllamaBaseUrl | ConvertTo-Json -Depth 8
 }
 elseif ($Prompt) {

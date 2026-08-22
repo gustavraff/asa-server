@@ -86,10 +86,20 @@ $clearButton.FlatStyle = 'Flat'
 $clearButton.FlatAppearance.BorderSize = 0
 $form.Controls.Add($clearButton)
 
+$testButton = New-Object Windows.Forms.Button
+$testButton.Text = 'Test AI connection'
+$testButton.Location = New-Object Drawing.Point(315, 220)
+$testButton.Size = New-Object Drawing.Size(160, 42)
+$testButton.BackColor = ([Drawing.Color]::FromArgb(46, 150, 145))
+$testButton.ForeColor = [Drawing.Color]::White
+$testButton.FlatStyle = 'Flat'
+$testButton.FlatAppearance.BorderSize = 0
+$form.Controls.Add($testButton)
+
 $status = New-Object Windows.Forms.Label
 $status.Text = 'Ready - using local Ollama model qwen3:8b'
-$status.Location = New-Object Drawing.Point(321, 230)
-$status.Size = New-Object Drawing.Size(541, 26)
+$status.Location = New-Object Drawing.Point(481, 230)
+$status.Size = New-Object Drawing.Size(381, 26)
 $status.ForeColor = $Green
 $status.TextAlign = 'MiddleRight'
 $form.Controls.Add($status)
@@ -179,6 +189,48 @@ $clearButton.Add_Click({
 })
 
 $closeButton.Add_Click({ $form.Close() })
+
+$testButton.Add_Click({
+    $testButton.Enabled = $false
+    $askButton.Enabled = $false
+    $form.Cursor = 'WaitCursor'
+    $status.Text = 'Testing AI connection...'
+    $status.ForeColor = $Amber
+    $summaryBox.Clear()
+    $list.Items.Clear()
+    $logBox.Clear()
+    [Windows.Forms.Application]::DoEvents()
+
+    try {
+        $result = Test-AsaAiConnection -Model 'qwen3:8b'
+        $logLines = foreach ($step in @($result.Steps)) {
+            $mark = if ($step.Success) { 'OK' } else { 'FAILED' }
+            "[$mark] $($step.Step): $($step.Message)"
+        }
+        $logBox.Text = ($logLines -join "`r`n")
+
+        if ($result.Success) {
+            $summaryBox.Text = 'AI connection test passed: Ollama is reachable, the model is installed, and it responded correctly to a test prompt. Nothing was written to any file.'
+            $status.Text = 'Test passed - AI is working'
+            $status.ForeColor = $Green
+        }
+        else {
+            $summaryBox.Text = 'AI connection test failed - see the execution log below for exactly which step failed and why.'
+            $status.Text = 'Test failed - see log'
+            $status.ForeColor = $Red
+        }
+    }
+    catch {
+        $status.Text = 'Test failed unexpectedly'
+        $status.ForeColor = $Red
+        $summaryBox.Text = $_.Exception.Message
+    }
+    finally {
+        $form.Cursor = 'Default'
+        $testButton.Enabled = $true
+        $askButton.Enabled = $true
+    }
+})
 
 $askButton.Add_Click({
     $request = $promptBox.Text.Trim()
