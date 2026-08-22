@@ -168,23 +168,6 @@ function Set-CmdConfigValue([string]$Key, [string]$Value) {
     Write-TextFileAtomic $CmdConfig $raw
 }
 
-function Get-IniValue([string]$Key) {
-    $raw = [IO.File]::ReadAllText($GameUserSettings)
-    $match = [regex]::Match($raw, '(?m)^' + [regex]::Escape($Key) + '=(?<value>.*)$')
-    if ($match.Success) { return $match.Groups['value'].Value.Trim() }
-    return ''
-}
-
-function Set-IniValue([string]$Key, [string]$Value) {
-    $raw = [IO.File]::ReadAllText($GameUserSettings)
-    $pattern = '(?m)^' + [regex]::Escape($Key) + '=.*$'
-    if (-not [regex]::IsMatch($raw, $pattern)) {
-        throw "Missing setting $Key in GameUserSettings.ini"
-    }
-    $raw = [regex]::Replace($raw, $pattern, $Key + '=' + $Value, 1)
-    Write-TextFileAtomic $GameUserSettings $raw
-}
-
 function Get-IniValueFromFile([string]$Path, [string]$Key, [string]$Default = '') {
     if (-not (Test-Path $Path)) { return $Default }
     $raw = [IO.File]::ReadAllText($Path)
@@ -571,9 +554,9 @@ function Load-Settings {
         if ($mapBox.SelectedIndex -lt 0) { $mapBox.Text = $config['MAP'] }
         $playersBox.Value = Get-SafeDecimal $config['MAX_PLAYERS'] 10 $playersBox.Minimum $playersBox.Maximum
         $modsBox.Text = $config['MODS']
-        $xpBox.Value = Get-SafeDecimal (Get-IniValue 'XPMultiplier') 1 $xpBox.Minimum $xpBox.Maximum
-        $harvestBox.Value = Get-SafeDecimal (Get-IniValue 'HarvestAmountMultiplier') 1 $harvestBox.Minimum $harvestBox.Maximum
-        $tamingBox.Value = Get-SafeDecimal (Get-IniValue 'TamingSpeedMultiplier') 1 $tamingBox.Minimum $tamingBox.Maximum
+        $xpBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'XPMultiplier' '1') 1 $xpBox.Minimum $xpBox.Maximum
+        $harvestBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'HarvestAmountMultiplier' '1') 1 $harvestBox.Minimum $harvestBox.Maximum
+        $tamingBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'TamingSpeedMultiplier' '1') 1 $tamingBox.Minimum $tamingBox.Maximum
         $script:BasicSettingsDirty = $false
     }
     finally {
@@ -605,11 +588,11 @@ function Save-Settings {
     Set-CmdConfigValue 'MAP' $map
     Set-CmdConfigValue 'MAX_PLAYERS' ([string][int]$playersBox.Value)
     Set-CmdConfigValue 'MODS' $mods
-    Set-IniValue 'SessionName' $name
-    Set-IniValue 'MaxPlayers' ([string][int]$playersBox.Value)
-    Set-IniValue 'XPMultiplier' $xpBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
-    Set-IniValue 'HarvestAmountMultiplier' $harvestBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
-    Set-IniValue 'TamingSpeedMultiplier' $tamingBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+    Set-IniSectionValue $GameUserSettings '[SessionSettings]' 'SessionName' $name
+    Set-IniSectionValue $GameUserSettings '[/Script/Engine.GameSession]' 'MaxPlayers' ([string][int]$playersBox.Value)
+    Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'XPMultiplier' $xpBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+    Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'HarvestAmountMultiplier' $harvestBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+    Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'TamingSpeedMultiplier' $tamingBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
     $script:BasicSettingsDirty = $false
 
     if (Get-ServerProcess) {
