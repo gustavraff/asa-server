@@ -26,7 +26,7 @@
     "AI output never writes INI directly; it must pass structured validation and preview."
   ],
   "dataset": "core",
-  "count": 147,
+  "count": 149,
   "settings": [
     {
       "name": "BabyCuddleGracePeriodMultiplier",
@@ -2538,6 +2538,42 @@
       "category": "core",
       "ai_usage": "default",
       "risk": "normal"
+    },
+    {
+      "name": "StartTimeHour",
+      "support": "supported",
+      "target": "GameUserSettings.ini",
+      "section": "[ServerSettings]",
+      "syntax": "StartTimeHour=<value>",
+      "value_type": "float",
+      "default": null,
+      "minimum": null,
+      "maximum": null,
+      "allowed_values": null,
+      "description": "Sets the hour of day (24-hour clock) the server's in-game time starts at after a restart; used together with StartTimeOverride.",
+      "source_url": "https://ark.wiki.gg/wiki/Server_configuration",
+      "category": "core",
+      "ai_usage": "default",
+      "risk": "normal",
+      "curation_note": "Added 2026-08-24 after diagnostics flagged it as an unrecognized live [ServerSettings] key. Not located via a direct automated fetch of the ark.wiki.gg Server_configuration page; confirmed instead via multiple independent community GameUserSettings.ini examples and server-config guides. Default/minimum/maximum intentionally left null -- no authoritative default value was found."
+    },
+    {
+      "name": "OverrideSecondsUntilBuriedTreasureAutoReveals",
+      "support": "supported",
+      "target": "GameUserSettings.ini",
+      "section": "[ServerSettings]",
+      "syntax": "OverrideSecondsUntilBuriedTreasureAutoReveals=<value>",
+      "value_type": "integer",
+      "default": null,
+      "minimum": null,
+      "maximum": null,
+      "allowed_values": null,
+      "description": "Overrides the number of seconds before buried treasure automatically reveals itself on the map.",
+      "source_url": "https://ark.wiki.gg/wiki/Server_configuration",
+      "category": "core",
+      "ai_usage": "default",
+      "risk": "normal",
+      "curation_note": "Added 2026-08-24 after diagnostics flagged it as an unrecognized live [ServerSettings] key (this server's own value: 1209600, i.e. 14 days). Not located via a direct automated fetch of the ark.wiki.gg Server_configuration page; confirmed instead via multiple independent real ASA GameUserSettings.ini examples using the same value. Default/minimum/maximum intentionally left null -- no authoritative default value was found."
     }
   ]
 }

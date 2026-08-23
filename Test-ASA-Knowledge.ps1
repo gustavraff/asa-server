@@ -232,7 +232,7 @@ Assert-True (-not $blockedProposal.Success) 'A knowledge-base-only setting (not 
 Sync-AsaKnowledgeIndex
 $index = Get-AsaKnowledgeIndex
 Assert-True (Test-Path -LiteralPath (Get-AsaKnowledgeCachePath)) 'Knowledge cache file is written after a sync'
-Assert-True ([int]$index.Counts.core -eq 147) 'Index reports the expected core dataset count (147)'
+Assert-True ([int]$index.Counts.core -eq 149) 'Index reports the expected core dataset count (149, after adding StartTimeHour and OverrideSecondsUntilBuriedTreasureAutoReveals)'
 Assert-True (@($index.Settings).Count -gt 400) 'Merged index contains settings from all datasets'
 
 # ---------------------------------------------------------------------------
