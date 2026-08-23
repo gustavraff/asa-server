@@ -227,7 +227,157 @@ $blockedProposal = Test-AsaAiApplyProposal -Proposal ([pscustomobject]@{
 Assert-True (-not $blockedProposal.Success) 'A knowledge-base-only setting (not in the write allow-list) is rejected by the apply validator'
 
 # ---------------------------------------------------------------------------
-# 10. Cache / index refresh
+# 11. Dependency evaluation reasons about EFFECTIVE configuration values
+#     (regression test for the PvEDinoDecayPeriodMultiplier false positive:
+#     DisableDinoDecayPvE defaults to False, so when it isn't explicitly
+#     configured the dependency is satisfied by that documented default, not
+#     flagged as an issue).
+# ---------------------------------------------------------------------------
+
+# 11a. Deterministic parsing of "SettingName=Value" hints; non-value hints
+# (command-line flags, presence-only) are left for the unchanged fallback path.
+$reqParsed = Get-AsaDependencyRequirement -HintText 'DisableDinoDecayPvE=false'
+Assert-True ($reqParsed.SettingName -eq 'DisableDinoDecayPvE' -and $reqParsed.RequiredValue -eq 'false') 'Get-AsaDependencyRequirement parses a "SettingName=Value" hint'
+Assert-True ((Get-AsaDependencyRequirement -HintText '-clusterid') -eq $null) 'Get-AsaDependencyRequirement returns $null for a bare command-line-flag hint'
+Assert-True ((Get-AsaDependencyRequirement -HintText 'CustomDynamicConfigUrl in GameUserSettings.ini') -eq $null) 'Get-AsaDependencyRequirement returns $null for a presence-only hint'
+
+# 11b. Unknown: no explicitly configured value AND no verified/documented default.
+$unknownEffective = Get-AsaEffectiveSettingValue -SettingName 'ZzzNotInAnyCatalogDataset' -ParsedEntries @()
+Assert-True ($unknownEffective.Value -eq $null -and $unknownEffective.Source -eq 'Unknown') 'Get-AsaEffectiveSettingValue reports Unknown when neither a configured value nor a documented default exists'
+
+# 11c. Satisfied by an EXPLICITLY configured value.
+$depExplicitSatisfied = @('[ServerSettings]', 'PvEDinoDecayPeriodMultiplier=2.0', 'DisableDinoDecayPvE=False')
+$diagDepA = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $depExplicitSatisfied -GameIniLines @()
+Assert-True ((Get-FindingsFor $diagDepA 'PvEDinoDecayPeriodMultiplier' 'DEPENDENCY ISSUES').Count -eq 0) 'Dependency satisfied by explicit value: no DEPENDENCY ISSUES finding'
+$satisfiedExplicitInfo = @(Get-FindingsFor $diagDepA 'PvEDinoDecayPeriodMultiplier' 'INFORMATION')
+Assert-True (($satisfiedExplicitInfo | Where-Object { $_.Message -like '*Dependency satisfied by explicit configuration*DisableDinoDecayPvE=False*' }).Count -ge 1) 'Dependency satisfied by explicit value: explanation names explicit configuration as the source'
+
+# 11d. Violated by an EXPLICITLY configured value.
+$depExplicitViolated = @('[ServerSettings]', 'PvEDinoDecayPeriodMultiplier=2.0', 'DisableDinoDecayPvE=True')
+$diagDepB = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $depExplicitViolated -GameIniLines @()
+$violatedFindings = @(Get-FindingsFor $diagDepB 'PvEDinoDecayPeriodMultiplier' 'DEPENDENCY ISSUES')
+Assert-True ($violatedFindings.Count -ge 1) 'Dependency violated by explicit value: DEPENDENCY ISSUES finding is reported'
+Assert-True (($violatedFindings | Where-Object { $_.Message -like '*violates the dependency*' -and $_.Message -like '*DisableDinoDecayPvE=True*' }).Count -ge 1) 'Dependency violated by explicit value: explanation states the actual effective value and that it violates the dependency'
+
+# 11e. Satisfied by a DOCUMENTED DEFAULT (the exact motivating false-positive:
+# DisableDinoDecayPvE not present in the INI at all).
+$depDefaultSatisfied = @('[ServerSettings]', 'PvEDinoDecayPeriodMultiplier=1')
+$diagDepC = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $depDefaultSatisfied -GameIniLines @()
+Assert-True ((Get-FindingsFor $diagDepC 'PvEDinoDecayPeriodMultiplier' 'DEPENDENCY ISSUES').Count -eq 0) 'Dependency satisfied by documented default: false-positive DEPENDENCY ISSUES finding no longer appears'
+$satisfiedDefaultInfo = @(Get-FindingsFor $diagDepC 'PvEDinoDecayPeriodMultiplier' 'INFORMATION')
+Assert-True (($satisfiedDefaultInfo | Where-Object { $_.Message -eq 'Dependency satisfied by documented default: DisableDinoDecayPvE=False.' }).Count -ge 1) 'Dependency satisfied by documented default: explanation matches the required deterministic wording'
+
+# ---------------------------------------------------------------------------
+# 12. Copy selected finding -- clean plain-text formatting
+# ---------------------------------------------------------------------------
+
+# 12a. WRONG TARGET FILE finding (matches the worked example in the request).
+$wrongFileLines = @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2')
+$diagWrongFile = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $wrongFileLines -GameIniLines @()
+$wrongFileFinding = (Get-FindingsFor $diagWrongFile 'PassiveTameIntervalMultiplier' 'WRONG TARGET FILE')[0]
+Assert-True ($wrongFileFinding -ne $null) 'Synthetic config reproduces a WRONG TARGET FILE finding for PassiveTameIntervalMultiplier'
+if ($wrongFileFinding) {
+    $copyText = Format-AsaDiagnosticFindingClipboardText -Finding $wrongFileFinding
+    Assert-True ($copyText -like '*ASA Configuration Diagnostic*') 'Copied finding text has the expected header'
+    Assert-True ($copyText -like '*Type: WRONG TARGET FILE*') 'Copied finding text includes Type'
+    Assert-True ($copyText -like '*Setting: PassiveTameIntervalMultiplier*') 'Copied finding text includes Setting'
+    Assert-True ($copyText -like '*Current value: 0.2*') 'Copied finding text includes Current value'
+    Assert-True ($copyText -like '*Current file: GameUserSettings.ini*') 'Copied finding text includes Current file'
+    Assert-True ($copyText -like '*Expected file: Game.ini*') 'Copied finding text includes Expected file'
+    Assert-True ($copyText -match [regex]::Escape('Expected section: [/script/shootergame.shootergamemode]')) 'Copied finding text includes Expected section'
+    Assert-True ($copyText -like '*Suggested correction:*Move the setting to the expected location while preserving its value.*') 'Copied finding text includes a deterministic suggested correction'
+    Assert-True ($copyText -like '*Read-only diagnostic. No configuration files were changed.*') 'Copied finding text ends with the read-only status line'
+}
+
+# 12b. Dependency/effective-default information is included when relevant.
+$depDefaultFinding = (Get-FindingsFor $diagDepC 'PvEDinoDecayPeriodMultiplier' 'INFORMATION')[0]
+Assert-True ($depDefaultFinding -ne $null) 'Dependency-satisfied finding is available to format'
+if ($depDefaultFinding) {
+    $depCopyText = Format-AsaDiagnosticFindingClipboardText -Finding $depDefaultFinding
+    Assert-True ($depCopyText -like '*Effective value: False*') 'Copied dependency finding includes Effective value'
+    Assert-True ($depCopyText -like '*Value source: Documented default*') 'Copied dependency finding includes Value source'
+    Assert-True ($depCopyText -like '*Dependency information:*DisableDinoDecayPvE=false*') 'Copied dependency finding includes Dependency information'
+}
+
+# 12c. Copying a finding never mutates the live config files.
+$pathsForCopy = Get-AsaAiFixedConfigPaths
+$beforeCopyUser = if (Test-Path -LiteralPath $pathsForCopy.GameUserSettings) { (Get-Item -LiteralPath $pathsForCopy.GameUserSettings).LastWriteTimeUtc } else { $null }
+Format-AsaDiagnosticFindingClipboardText -Finding $wrongFileFinding | Out-Null
+$afterCopyUser = if (Test-Path -LiteralPath $pathsForCopy.GameUserSettings) { (Get-Item -LiteralPath $pathsForCopy.GameUserSettings).LastWriteTimeUtc } else { $null }
+Assert-True ($beforeCopyUser -eq $afterCopyUser) 'Formatting a finding for copy does not touch GameUserSettings.ini'
+
+# ---------------------------------------------------------------------------
+# 13. Copy diagnostic report -- grouped, summarized, read-only
+# ---------------------------------------------------------------------------
+$reportGameUserSettings = @(
+    '[ServerSettings]'
+    'PassiveTameIntervalMultiplier=0.2'
+    'MaxPlayers=10'
+    ''
+    '[/Script/ShooterGame.ShooterGameUserSettings]'
+    'LastJoinedSessionPerCategory=1'
+    'LastJoinedSessionPerCategory=2'
+)
+$diagForReport = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $reportGameUserSettings -GameIniLines @()
+$displayForReport = @(Get-AsaConfigDiagnosticsDisplayFindings -Diagnostics $diagForReport)
+$reportText = Format-AsaDiagnosticsReportClipboardText -Diagnostics $diagForReport -DisplayFindings $displayForReport
+
+Assert-True ($reportText -like '*ASA Configuration Diagnostic Report*') 'Report text has the expected header'
+Assert-True ($reportText -like "*Configuration problems: $($diagForReport.ProblemFindingsCount)*") 'Report text includes the configuration-problems summary count'
+Assert-True ($reportText -like "*Informational findings: $($diagForReport.InformationalFindingsCount)*") 'Report text includes the informational-findings summary count'
+Assert-True ($reportText -like "*Ignored non-server/bookkeeping entries: $($diagForReport.IgnoredNonServerCount)*") 'Report text includes the ignored-non-server summary count'
+Assert-True ($diagForReport.IgnoredNonServerCount -ge 1) 'Sanity: synthetic report input actually contains ignored non-server entries'
+Assert-True ($reportText -notlike '*LastJoinedSessionPerCategory*') 'Report text does not dump individual IGNORED_NON_SERVER bookkeeping entries'
+Assert-True ($reportText -like '*WRONG TARGET FILE*') 'Report text groups findings under their category heading'
+Assert-True ($reportText -like '*PassiveTameIntervalMultiplier = 0.2*') 'Report text lists the finding under its category'
+Assert-True ($reportText -like '*End of report*') 'Report text includes the closing marker'
+Assert-True ($reportText -like '*Diagnostics are read-only.*No configuration files were modified.*') 'Report text ends with the read-only status lines'
+
+# Report is built only from the passed-in (already displayed/filtered) findings.
+$filteredDisplay = @($displayForReport | Where-Object { $_.Category -ne 'UNSUPPORTED' })
+$filteredReportText = Format-AsaDiagnosticsReportClipboardText -Diagnostics $diagForReport -DisplayFindings $filteredDisplay
+Assert-True ($filteredReportText -notlike '*UNSUPPORTED*') 'Report reflects only the currently displayed/filtered findings passed to it, not the full raw set'
+
+# ---------------------------------------------------------------------------
+# 14. Secret redaction in copy/export text
+# ---------------------------------------------------------------------------
+# Deliberately the WRONG section (mirrors test 7's redaction check) so each
+# password produces a WRONG SECTION finding carrying a Value to redact --
+# a correctly-sectioned secret produces no finding at all to copy.
+$secretLines = @('[WrongSection]', 'ServerAdminPassword=SuperSecret123', 'ServerPassword=AnotherSecret456', 'MyCustomApiToken=leaked-token-value')
+$diagSecrets = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $secretLines -GameIniLines @()
+
+$adminPwFinding = @($diagSecrets.Findings | Where-Object { $_.Key -eq 'ServerAdminPassword' }) | Select-Object -First 1
+Assert-True ($adminPwFinding -ne $null) 'ServerAdminPassword produces at least one finding to copy'
+if ($adminPwFinding) {
+    $adminPwCopyText = Format-AsaDiagnosticFindingClipboardText -Finding $adminPwFinding
+    Assert-True ($adminPwCopyText -notlike '*SuperSecret123*') 'Copied ServerAdminPassword finding never exposes the real value'
+    Assert-True ($adminPwCopyText -like '*[REDACTED]*') 'Copied ServerAdminPassword finding shows [REDACTED]'
+}
+
+$pwFinding = @($diagSecrets.Findings | Where-Object { $_.Key -eq 'ServerPassword' }) | Select-Object -First 1
+if ($pwFinding) {
+    $pwCopyText = Format-AsaDiagnosticFindingClipboardText -Finding $pwFinding
+    Assert-True ($pwCopyText -notlike '*AnotherSecret456*') 'Copied ServerPassword finding never exposes the real value'
+}
+
+# Generic/unrecognized secret-like key name (not in the curated catalog at all)
+# must still be redacted in copy/export text via the name-based heuristic.
+$apiTokenFinding = @($diagSecrets.Findings | Where-Object { $_.Key -eq 'MyCustomApiToken' }) | Select-Object -First 1
+Assert-True ($apiTokenFinding -ne $null) 'Unrecognized token-like key still produces a finding (UNKNOWN_SERVER_SETTING)'
+if ($apiTokenFinding) {
+    $apiTokenCopyText = Format-AsaDiagnosticFindingClipboardText -Finding $apiTokenFinding
+    Assert-True ($apiTokenCopyText -notlike '*leaked-token-value*') 'Copied finding for an unrecognized token-like key never exposes its raw value'
+}
+
+$secretsDisplay = @(Get-AsaConfigDiagnosticsDisplayFindings -Diagnostics $diagSecrets)
+$secretsReportText = Format-AsaDiagnosticsReportClipboardText -Diagnostics $diagSecrets -DisplayFindings $secretsDisplay
+Assert-True ($secretsReportText -notlike '*SuperSecret123*') 'Full report text never exposes ServerAdminPassword'
+Assert-True ($secretsReportText -notlike '*AnotherSecret456*') 'Full report text never exposes ServerPassword'
+Assert-True ($secretsReportText -notlike '*leaked-token-value*') 'Full report text never exposes an unrecognized token-like value'
+
+# ---------------------------------------------------------------------------
+# 15. Cache / index refresh
 # ---------------------------------------------------------------------------
 Sync-AsaKnowledgeIndex
 $index = Get-AsaKnowledgeIndex

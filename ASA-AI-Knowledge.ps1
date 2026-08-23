@@ -477,6 +477,92 @@ function Get-AsaDependencyHint {
     return $null
 }
 
+$script:AsaSecretKeyPattern = 'password|passwd|apikey|api[_-]?key|token|secret|credential'
+
+function Test-AsaKeyLooksSecret {
+    <# Heuristic, name-based secret detector used only for clipboard/export
+       redaction -- independent of (and in addition to) the knowledge base's
+       per-entry "sensitive" flag, so an unrecognized key like a mod-added
+       token still never reaches the clipboard in cleartext. #>
+    param([Parameter(Mandatory)][string]$Key)
+    return [bool]([regex]::IsMatch($Key, $script:AsaSecretKeyPattern, 'IgnoreCase'))
+}
+
+function Get-AsaDependencyRequirement {
+    <#
+    Deterministically parses a dependency hint of the form "SettingName=Value"
+    (optionally followed by trailing qualifier text such as "in command line")
+    into a structured Setting/Value pair. Returns $null when the hint isn't in
+    this shape (e.g. a bare command-line flag like "-clusterid" or a
+    "SettingName in <file>" presence-only requirement) -- those keep being
+    reported the same way as before, since there is no deterministic value to
+    compare against.
+    #>
+    param([Parameter(Mandatory)][string]$HintText)
+
+    $m = [regex]::Match($HintText.Trim(), '^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\S+)')
+    if (-not $m.Success) { return $null }
+    return [pscustomobject]@{
+        SettingName   = $m.Groups[1].Value
+        RequiredValue = $m.Groups[2].Value
+    }
+}
+
+function Get-AsaEffectiveSettingValue {
+    <#
+    Resolves the EFFECTIVE value of a dependency's required setting, in order:
+    1. Explicitly configured value, if present anywhere in the parsed INI entries.
+    2. Otherwise, the documented default from the knowledge base, if known.
+    3. Otherwise Unknown -- no configured value and no verified default.
+    Never writes anything -- purely a read/compare over already-parsed lines.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$SettingName,
+        [Parameter(Mandatory)][AllowEmptyCollection()]$ParsedEntries
+    )
+
+    $baseName = Get-AsaSettingBaseName -Key $SettingName
+    $catalog = @(Find-AsaSettingExact -Name $baseName)
+    $isSensitive = (Test-AsaKeyLooksSecret -Key $baseName) -or
+                   ((@($catalog | Where-Object { Get-AsaSettingIsSensitive -Entry $_ })).Count -gt 0)
+
+    $explicit = @($ParsedEntries | Where-Object { (Get-AsaSettingBaseName -Key $_.Key) -ieq $baseName })
+    if ($explicit.Count -gt 0) {
+        $value = $explicit[0].Value.Trim()
+        return [pscustomobject]@{
+            Value        = $value
+            Source       = 'Explicit configuration'
+            DisplayValue = if ($isSensitive) { '[REDACTED]' } else { $value }
+        }
+    }
+
+    if ($catalog.Count -gt 0 -and $null -ne $catalog[0].default) {
+        $value = [string]$catalog[0].default
+        return [pscustomobject]@{
+            Value        = $value
+            Source       = 'Documented default'
+            DisplayValue = if ($isSensitive) { '[REDACTED]' } else { $value }
+        }
+    }
+
+    return [pscustomobject]@{ Value = $null; Source = 'Unknown'; DisplayValue = $null }
+}
+
+function Test-AsaDependencyValueMatches {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Effective, [Parameter(Mandatory)][AllowEmptyString()][string]$Required)
+
+    $e = $Effective.Trim().Trim('"')
+    $r = $Required.Trim().Trim('"')
+    if ($e -ieq $r) { return $true }
+
+    [decimal]$en = 0; [decimal]$rn = 0
+    if ([decimal]::TryParse($e, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$en) -and
+        [decimal]::TryParse($r, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$rn)) {
+        return $en -eq $rn
+    }
+    return $false
+}
+
 function Get-AsaObsoleteReplacementHint {
     param([Parameter(Mandatory)]$Entry)
     $m = [regex]::Match([string]$Entry.description, '(?:use|replaced by)\s+([^\.]+)', 'IgnoreCase')
@@ -523,8 +609,29 @@ function Test-AsaIsIgnoredNonServerEntry {
 }
 
 function New-AsaDiagnosticFinding {
-    param([string]$Category, [string]$File, [string]$Section, [string]$Key, [string]$Value, [int]$Line, [string]$Message)
-    [pscustomobject]@{ Category = $Category; File = $File; Section = $Section; Key = $Key; Value = $Value; Line = $Line; Message = $Message }
+    param(
+        [string]$Category, [string]$File, [string]$Section, [string]$Key, [string]$Value, [int]$Line, [string]$Message,
+        [string]$ExpectedFile, [string]$ExpectedSection, [string]$EffectiveValue, [string]$ValueSource,
+        [string]$Dependency, [string]$Replacement
+    )
+    [pscustomobject]@{
+        Category         = $Category
+        File             = $File
+        Section          = $Section
+        Key              = $Key
+        Value            = $Value
+        Line             = $Line
+        Message          = $Message
+        # Optional, category-specific extras -- populated only when applicable
+        # and deterministically derivable, so a plain-text/clipboard renderer
+        # can include them without ever having to guess.
+        ExpectedFile     = $ExpectedFile
+        ExpectedSection  = $ExpectedSection
+        EffectiveValue   = $EffectiveValue
+        ValueSource      = $ValueSource
+        Dependency       = $Dependency
+        Replacement      = $Replacement
+    }
 }
 
 function Get-AsaStartupArgumentFindings {
@@ -629,7 +736,7 @@ function Invoke-AsaConfigDiagnostics {
 
         if ($exact.Count -eq 0) {
             if ($sameTarget.Count -gt 0) {
-                [void]$findings.Add((New-AsaDiagnosticFinding -Category 'WRONG SECTION' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "Documented section is $($best.section), not $($item.Section) -- it may silently have no effect here."))
+                [void]$findings.Add((New-AsaDiagnosticFinding -Category 'WRONG SECTION' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "Documented section is $($best.section), not $($item.Section) -- it may silently have no effect here." -ExpectedFile $item.TargetFile -ExpectedSection $best.section))
             }
             elseif ($best.target -eq 'DynamicConfig') {
                 [void]$findings.Add((New-AsaDiagnosticFinding -Category 'NO EFFECT' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message 'This is a DynamicConfig-only setting; placing it in an INI file has no effect. It must be set through the live DynamicConfig mechanism instead.'))
@@ -638,18 +745,19 @@ function Invoke-AsaConfigDiagnostics {
                 [void]$findings.Add((New-AsaDiagnosticFinding -Category 'NO EFFECT' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message 'This is a startup command-line argument, not an INI setting; placing it in an INI file has no effect.'))
             }
             else {
-                [void]$findings.Add((New-AsaDiagnosticFinding -Category 'WRONG TARGET FILE' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "Documented target is $($best.target), not $($item.TargetFile)."))
+                [void]$findings.Add((New-AsaDiagnosticFinding -Category 'WRONG TARGET FILE' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "Documented target is $($best.target), not $($item.TargetFile)." -ExpectedFile $best.target -ExpectedSection $best.section))
             }
         }
 
         foreach ($tag in (Get-AsaSettingStatusTags -Entry $best)) {
             if ($tag -eq 'SUPPORTED') { continue }
             $extra = ''
+            $replacementHint = $null
             if ($tag -eq 'OBSOLETE') {
-                $hint = Get-AsaObsoleteReplacementHint -Entry $best
-                if ($hint) { $extra = " Replacement: $hint." }
+                $replacementHint = Get-AsaObsoleteReplacementHint -Entry $best
+                if ($replacementHint) { $extra = " Replacement: $replacementHint." }
             }
-            [void]$findings.Add((New-AsaDiagnosticFinding -Category $tag -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "$($best.description)$extra"))
+            [void]$findings.Add((New-AsaDiagnosticFinding -Category $tag -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "$($best.description)$extra" -Replacement $replacementHint))
         }
 
         if ($best.value_type -eq 'array') {
@@ -676,7 +784,30 @@ function Invoke-AsaConfigDiagnostics {
 
         $dependency = Get-AsaDependencyHint -Entry $best
         if ($dependency) {
-            [void]$findings.Add((New-AsaDiagnosticFinding -Category 'DEPENDENCY ISSUES' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "This setting only takes effect when $dependency -- verify that is also configured."))
+            # Deterministic EFFECTIVE-value evaluation -- never delegated to the
+            # local generative model. A dependency setting that is missing from
+            # the INI but has a documented default is satisfied by that default;
+            # only a real violation or a genuinely unknown effective value is
+            # reported as a DEPENDENCY ISSUES problem.
+            $requirement = Get-AsaDependencyRequirement -HintText $dependency
+            if ($requirement) {
+                $effective = Get-AsaEffectiveSettingValue -SettingName $requirement.SettingName -ParsedEntries $parsed
+                if ($null -eq $effective.Value) {
+                    [void]$findings.Add((New-AsaDiagnosticFinding -Category 'DEPENDENCY ISSUES' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "This setting only takes effect when $dependency. $($requirement.SettingName) has no explicitly configured value and no documented default, so the dependency cannot be verified." -Dependency $dependency -ValueSource $effective.Source))
+                }
+                elseif (Test-AsaDependencyValueMatches -Effective $effective.Value -Required $requirement.RequiredValue) {
+                    [void]$findings.Add((New-AsaDiagnosticFinding -Category 'INFORMATION' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "Dependency satisfied by $($effective.Source.ToLowerInvariant()): $($requirement.SettingName)=$($effective.DisplayValue)." -Dependency $dependency -EffectiveValue $effective.DisplayValue -ValueSource $effective.Source))
+                }
+                else {
+                    [void]$findings.Add((New-AsaDiagnosticFinding -Category 'DEPENDENCY ISSUES' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "This setting only takes effect when $dependency. Currently $($requirement.SettingName)=$($effective.DisplayValue) ($($effective.Source)), which violates the dependency." -Dependency $dependency -EffectiveValue $effective.DisplayValue -ValueSource $effective.Source))
+                }
+            }
+            else {
+                # Command-line-flag or presence-only requirement (e.g. "-clusterid",
+                # "CustomDynamicConfigUrl in GameUserSettings.ini") -- no structured
+                # value to compare against, so behavior is unchanged from before.
+                [void]$findings.Add((New-AsaDiagnosticFinding -Category 'DEPENDENCY ISSUES' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "This setting only takes effect when $dependency -- verify that is also configured." -Dependency $dependency))
+            }
         }
     }
 
@@ -725,4 +856,156 @@ function Get-AsaConfigDiagnosticsDisplayFindings {
     #>
     param([Parameter(Mandatory)]$Diagnostics)
     return @($Diagnostics.Findings | Where-Object { $script:AsaDiagnosticsDefaultVisibleCategories -contains $_.Category })
+}
+
+# ---------------------------------------------------------------------------
+# Plain-text clipboard/export formatting -- pure, read-only functions used by
+# the "Copy selected finding" / "Copy diagnostic report" UI controls. Never
+# writes any file, never mutates a finding, and always redacts anything that
+# looks like a secret before it can reach the clipboard.
+# ---------------------------------------------------------------------------
+
+function Get-AsaBestCatalogEntryForFinding {
+    <# Mirrors the same exact/same-target/first selection Invoke-AsaConfigDiagnostics
+       uses internally, so "Support status" in a copied finding matches what the
+       diagnostic actually reasoned about. #>
+    param([Parameter(Mandatory)]$Finding)
+
+    $baseName = Get-AsaSettingBaseName -Key $Finding.Key
+    $candidates = @(Find-AsaSettingExact -Name $baseName)
+    if ($candidates.Count -eq 0) { return $null }
+
+    $exact = @($candidates | Where-Object { $_.target -ceq $Finding.File -and ([string]$_.section).Trim() -ieq ([string]$Finding.Section).Trim() })
+    if ($exact.Count -gt 0) { return $exact[0] }
+    $sameTarget = @($candidates | Where-Object { $_.target -ceq $Finding.File })
+    if ($sameTarget.Count -gt 0) { return $sameTarget[0] }
+    return $candidates[0]
+}
+
+function Get-AsaDiagnosticSuggestedCorrection {
+    <# Fixed, category-derived corrections only -- never an invented, per-instance
+       guess. Categories without a deterministic correction return $null. #>
+    param([Parameter(Mandatory)]$Finding)
+
+    switch ($Finding.Category) {
+        'WRONG TARGET FILE' { return 'Move the setting to the expected location while preserving its value.' }
+        'WRONG SECTION'     { return 'Move the setting to the expected section while preserving its value.' }
+        'DUPLICATES'        { return 'Remove the extra duplicate line(s), keeping only one.' }
+        'OBSOLETE'          { if ($Finding.Replacement) { return "Replace with $($Finding.Replacement)." } else { return $null } }
+        default             { return $null }
+    }
+}
+
+function Get-AsaDiagnosticSafeValue {
+    <# Current-value text for clipboard/export use: redacts anything whose key
+       looks secret-like, even if it wasn't already caught by the knowledge
+       base's per-entry "sensitive" flag upstream. #>
+    param([Parameter(Mandatory)]$Finding)
+    if (Test-AsaKeyLooksSecret -Key $Finding.Key) { return '[REDACTED]' }
+    return $Finding.Value
+}
+
+function Format-AsaDiagnosticFindingClipboardText {
+    <#
+    Builds the clean, human-readable plain-text report for a single selected
+    diagnostic finding. Only includes fields that actually have information;
+    never invents a correction that can't be deterministically derived.
+    #>
+    param([Parameter(Mandatory)]$Finding)
+
+    $catalogEntry = Get-AsaBestCatalogEntryForFinding -Finding $Finding
+    $supportStatus = if ($catalogEntry) { (Get-AsaSettingStatusTags -Entry $catalogEntry) -join ', ' } else { $null }
+    $suggestedCorrection = Get-AsaDiagnosticSuggestedCorrection -Finding $Finding
+    $safeValue = Get-AsaDiagnosticSafeValue -Finding $Finding
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('ASA Configuration Diagnostic')
+    [void]$lines.Add('')
+    [void]$lines.Add("Type: $($Finding.Category)")
+    if ($Finding.Key) { [void]$lines.Add("Setting: $($Finding.Key)") }
+    if ($safeValue) { [void]$lines.Add("Current value: $safeValue") }
+    if ($Finding.File) { [void]$lines.Add("Current file: $($Finding.File)") }
+    if ($Finding.Section) { [void]$lines.Add("Current section: $($Finding.Section)") }
+    if ($Finding.ExpectedFile) { [void]$lines.Add("Expected file: $($Finding.ExpectedFile)") }
+    if ($Finding.ExpectedSection) { [void]$lines.Add("Expected section: $($Finding.ExpectedSection)") }
+    if ($supportStatus) { [void]$lines.Add("Support status: $supportStatus") }
+    if ($Finding.EffectiveValue) { [void]$lines.Add("Effective value: $($Finding.EffectiveValue)") }
+    if ($Finding.ValueSource) { [void]$lines.Add("Value source: $($Finding.ValueSource)") }
+
+    if ($Finding.Message) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Reason:')
+        [void]$lines.Add($Finding.Message)
+    }
+    if ($Finding.Dependency) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Dependency information:')
+        [void]$lines.Add($Finding.Dependency)
+    }
+    if ($Finding.Replacement) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Replacement:')
+        [void]$lines.Add($Finding.Replacement)
+    }
+    if ($suggestedCorrection) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Suggested correction:')
+        [void]$lines.Add($suggestedCorrection)
+    }
+
+    [void]$lines.Add('')
+    [void]$lines.Add('Status:')
+    [void]$lines.Add('Read-only diagnostic. No configuration files were changed.')
+
+    return ($lines -join "`r`n")
+}
+
+function Format-AsaDiagnosticFindingSummaryLine {
+    param([Parameter(Mandatory)]$Finding)
+    $safeValue = Get-AsaDiagnosticSafeValue -Finding $Finding
+    if ($safeValue) { return "$($Finding.Key) = $safeValue" }
+    return "$($Finding.Key)"
+}
+
+function Format-AsaDiagnosticsReportClipboardText {
+    <#
+    Builds the clean, plain-text export of the CURRENTLY DISPLAYED diagnostic
+    findings (whatever the caller passes as -DisplayFindings), grouped by
+    category, with a summary line for ignored/bookkeeping entries instead of
+    dumping them individually. Read-only; makes no changes anywhere.
+    #>
+    param(
+        [Parameter(Mandatory)]$Diagnostics,
+        [Parameter(Mandatory)][AllowEmptyCollection()]$DisplayFindings
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('ASA Configuration Diagnostic Report')
+    [void]$lines.Add('')
+    [void]$lines.Add('Summary')
+    [void]$lines.Add("Configuration problems: $($Diagnostics.ProblemFindingsCount)")
+    [void]$lines.Add("Informational findings: $($Diagnostics.InformationalFindingsCount)")
+    [void]$lines.Add("Ignored non-server/bookkeeping entries: $($Diagnostics.IgnoredNonServerCount)")
+
+    $groups = @($DisplayFindings) | Where-Object { $_.Category -ne 'IGNORED_NON_SERVER' } | Group-Object -Property Category
+    foreach ($group in $groups) {
+        [void]$lines.Add('')
+        [void]$lines.Add($group.Name)
+        foreach ($finding in $group.Group) {
+            [void]$lines.Add("- $(Format-AsaDiagnosticFindingSummaryLine -Finding $finding)")
+            if ($finding.File -or $finding.Section) { [void]$lines.Add("  Current: $($finding.File) [$($finding.Section)]") }
+            if ($finding.ExpectedFile -or $finding.ExpectedSection) { [void]$lines.Add("  Expected: $($finding.ExpectedFile) [$($finding.ExpectedSection)]") }
+            if ($finding.EffectiveValue) { [void]$lines.Add("  Effective value: $($finding.EffectiveValue) ($($finding.ValueSource))") }
+            if ($finding.Replacement) { [void]$lines.Add("  Replacement: $($finding.Replacement)") }
+            if ($finding.Message) { [void]$lines.Add("  Reason: $($finding.Message)") }
+        }
+    }
+
+    [void]$lines.Add('')
+    [void]$lines.Add('End of report')
+    [void]$lines.Add('')
+    [void]$lines.Add('Diagnostics are read-only.')
+    [void]$lines.Add('No configuration files were modified.')
+
+    return ($lines -join "`r`n")
 }

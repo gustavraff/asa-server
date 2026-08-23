@@ -13,6 +13,12 @@ if (-not (Test-Path -LiteralPath $enginePath)) {
 
 . $enginePath
 
+# Set only while the list is showing the results of the last "Analyze ASA
+# configuration" run; cleared whenever any other action repopulates the list,
+# so the copy buttons never export stale or mismatched findings.
+$script:LastDiagnostics = $null
+$script:LastDiagnosticsDisplayFindings = @()
+
 $Background = [Drawing.Color]::FromArgb(25, 29, 36)
 $Panel = [Drawing.Color]::FromArgb(37, 43, 52)
 $Input = [Drawing.Color]::FromArgb(53, 61, 72)
@@ -144,9 +150,29 @@ $form.Controls.Add($summaryBox)
 $changesLabel = New-Object Windows.Forms.Label
 $changesLabel.Text = 'Settings changes, actions, custom recipes, facts, or diagnostic findings'
 $changesLabel.Location = New-Object Drawing.Point(22, 418)
-$changesLabel.Size = New-Object Drawing.Size(500, 24)
+$changesLabel.Size = New-Object Drawing.Size(430, 24)
 $changesLabel.ForeColor = $Text
 $form.Controls.Add($changesLabel)
+
+$copySelectedButton = New-Object Windows.Forms.Button
+$copySelectedButton.Text = 'Copy selected finding'
+$copySelectedButton.Location = New-Object Drawing.Point(460, 412)
+$copySelectedButton.Size = New-Object Drawing.Size(180, 32)
+$copySelectedButton.BackColor = [Drawing.Color]::FromArgb(79, 99, 125)
+$copySelectedButton.ForeColor = [Drawing.Color]::White
+$copySelectedButton.FlatStyle = 'Flat'
+$copySelectedButton.FlatAppearance.BorderSize = 0
+$form.Controls.Add($copySelectedButton)
+
+$copyReportButton = New-Object Windows.Forms.Button
+$copyReportButton.Text = 'Copy diagnostic report'
+$copyReportButton.Location = New-Object Drawing.Point(648, 412)
+$copyReportButton.Size = New-Object Drawing.Size(192, 32)
+$copyReportButton.BackColor = [Drawing.Color]::FromArgb(79, 99, 125)
+$copyReportButton.ForeColor = [Drawing.Color]::White
+$copyReportButton.FlatStyle = 'Flat'
+$copyReportButton.FlatAppearance.BorderSize = 0
+$form.Controls.Add($copyReportButton)
 
 $list = New-Object Windows.Forms.ListView
 $list.Location = New-Object Drawing.Point(22, 446)
@@ -204,6 +230,8 @@ $clearButton.Add_Click({
     $summaryBox.Clear()
     $list.Items.Clear()
     $logBox.Clear()
+    $script:LastDiagnostics = $null
+    $script:LastDiagnosticsDisplayFindings = @()
     $status.Text = 'Ready'
     $status.ForeColor = $Green
 })
@@ -219,6 +247,8 @@ $testButton.Add_Click({
     $summaryBox.Clear()
     $list.Items.Clear()
     $logBox.Clear()
+    $script:LastDiagnostics = $null
+    $script:LastDiagnosticsDisplayFindings = @()
     [Windows.Forms.Application]::DoEvents()
 
     try {
@@ -269,6 +299,8 @@ $knowledgeButton.Add_Click({
     $summaryBox.Clear()
     $list.Items.Clear()
     $logBox.Clear()
+    $script:LastDiagnostics = $null
+    $script:LastDiagnosticsDisplayFindings = @()
     [Windows.Forms.Application]::DoEvents()
 
     try {
@@ -318,11 +350,15 @@ $diagnosticsButton.Add_Click({
     $summaryBox.Clear()
     $list.Items.Clear()
     $logBox.Clear()
+    $script:LastDiagnostics = $null
+    $script:LastDiagnosticsDisplayFindings = @()
     [Windows.Forms.Application]::DoEvents()
 
     try {
         $result = Invoke-AsaConfigDiagnostics
         $displayFindings = @(Get-AsaConfigDiagnosticsDisplayFindings -Diagnostics $result)
+        $script:LastDiagnostics = $result
+        $script:LastDiagnosticsDisplayFindings = $displayFindings
 
         $summaryLine = "Read-only configuration health check -- $($result.ProblemFindingsCount) configuration problem(s)"
         if ($result.InformationalFindingsCount -gt 0) { $summaryLine += ", $($result.InformationalFindingsCount) informational note(s)" }
@@ -337,10 +373,11 @@ $diagnosticsButton.Add_Click({
             [void]$item.SubItems.Add([string]$finding.Key)
             [void]$item.SubItems.Add([string]$finding.Value)
             [void]$item.SubItems.Add("[$($finding.File) $($finding.Section) line $($finding.Line)] $($finding.Message)")
+            $item.Tag = $finding
             [void]$list.Items.Add($item)
         }
 
-        $logBox.Text = "Read-only: no setting was changed. Showing $($displayFindings.Count) of $($result.TotalFindings) total finding(s); $($result.IgnoredNonServerCount) non-server bookkeeping entries are hidden from this view but still counted above. To fix something found here, describe the change above and use Run request -- it still goes through the normal allow-list, preview, backup, and rollback pipeline."
+        $logBox.Text = "Read-only: no setting was changed. Showing $($displayFindings.Count) of $($result.TotalFindings) total finding(s); $($result.IgnoredNonServerCount) non-server bookkeeping entries are hidden from this view but still counted above. To fix something found here, describe the change above and use Run request -- it still goes through the normal allow-list, preview, backup, and rollback pipeline. Select a row and use Copy selected finding, or use Copy diagnostic report for everything shown."
         $status.Text = if ($result.ProblemFindingsCount -eq 0) { 'No configuration problems found' } else { "$($result.ProblemFindingsCount) configuration problem(s) -- see list below" }
         $status.ForeColor = if ($result.ProblemFindingsCount -eq 0) { $Green } else { $Amber }
     }
@@ -373,6 +410,8 @@ $askButton.Add_Click({
     $summaryBox.Clear()
     $list.Items.Clear()
     $logBox.Clear()
+    $script:LastDiagnostics = $null
+    $script:LastDiagnosticsDisplayFindings = @()
     [Windows.Forms.Application]::DoEvents()
 
     try {
@@ -437,6 +476,53 @@ $askButton.Add_Click({
         $form.Cursor = 'Default'
         $askButton.Enabled = $true
         $clearButton.Enabled = $true
+    }
+})
+
+$copySelectedButton.Add_Click({
+    if (-not $script:LastDiagnostics) {
+        $status.Text = 'Run "Analyze ASA configuration" first, then select a finding to copy.'
+        $status.ForeColor = $Amber
+        return
+    }
+    if ($list.SelectedItems.Count -eq 0) {
+        $status.Text = 'Select a diagnostic finding row first.'
+        $status.ForeColor = $Amber
+        return
+    }
+    $finding = $list.SelectedItems[0].Tag
+    if (-not $finding) {
+        $status.Text = 'The selected row is not a diagnostic finding.'
+        $status.ForeColor = $Amber
+        return
+    }
+    try {
+        $text = Format-AsaDiagnosticFindingClipboardText -Finding $finding
+        [Windows.Forms.Clipboard]::SetText($text)
+        $status.Text = 'Diagnostic copied to clipboard.'
+        $status.ForeColor = $Green
+    }
+    catch {
+        $status.Text = "Copy failed: $($_.Exception.Message)"
+        $status.ForeColor = $Red
+    }
+})
+
+$copyReportButton.Add_Click({
+    if (-not $script:LastDiagnostics) {
+        $status.Text = 'Run "Analyze ASA configuration" first to generate a report to copy.'
+        $status.ForeColor = $Amber
+        return
+    }
+    try {
+        $text = Format-AsaDiagnosticsReportClipboardText -Diagnostics $script:LastDiagnostics -DisplayFindings $script:LastDiagnosticsDisplayFindings
+        [Windows.Forms.Clipboard]::SetText($text)
+        $status.Text = 'Diagnostic report copied to clipboard.'
+        $status.ForeColor = $Green
+    }
+    catch {
+        $status.Text = "Copy failed: $($_.Exception.Message)"
+        $status.ForeColor = $Red
     }
 })
 
