@@ -70,6 +70,7 @@ Every AI-driven change — rate settings, actions, recipe overrides, relocations
 11. Commit completed work (only the files relevant to the task — see Git expectations above).
 12. When switching to a substantially different task, prefer a fresh Claude Code session instead of carrying a large conversation context.
 13. Use `/compact` during a long single task if context becomes large.
+14. If the task changes substantially, the session has already been compacted, or work passes roughly 25 tool calls, create `AI-THREAD-HANDOFF.md` with `AI-Usage-Audit.ps1 -CreateHandoff -CurrentTask "..." -NextStep "..."` before another large phase. Then stop and ask Gustav to begin a fresh session. Use `/compact` only to finish the same coherent task; use a fresh session for a new task.
 
 ## USAGE AUDIT AND OVERUSE CONTROL
 - `AI-Usage-Audit.ps1 -ShowWindow` records a local post-task audit. The user may enter official before/after credit values; never estimate an exact credit charge and present it as measured.

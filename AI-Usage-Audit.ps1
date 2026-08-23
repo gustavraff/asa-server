@@ -2,6 +2,9 @@ param(
     [switch]$ShowWindow,
     [switch]$LatestReport,
     [switch]$Preflight,
+    [switch]$CreateHandoff,
+    [string]$CurrentTask = '',
+    [string]$NextStep = '',
     [int]$PlannedToolCalls = 0,
     [int]$PlannedRepeatedActions = 0,
     [int]$PlannedFullScans = 0,
@@ -12,7 +15,60 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AuditFolder = Join-Path $Root 'usage-audit'
 $AuditLog = Join-Path $AuditFolder 'entries.jsonl'
+$HandoffPath = Join-Path $Root 'AI-THREAD-HANDOFF.md'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
+
+function New-ThreadHandoff([string]$Task,[string]$Next) {
+    if ([string]::IsNullOrWhiteSpace($Task)) { $Task = 'ASA Server project continuation' }
+    if ([string]::IsNullOrWhiteSpace($Next)) { $Next = 'Ask Gustav for the next concrete, bounded task before making changes.' }
+
+    $branch = (& git -C $Root branch --show-current 2>$null | Select-Object -First 1)
+    $commits = @(& git -C $Root log -5 --oneline 2>$null)
+    $status = @(& git -C $Root status --short 2>$null)
+    if ([string]::IsNullOrWhiteSpace($branch)) { $branch = 'unknown' }
+    if ($commits.Count -eq 0) { $commits = @('Unavailable') }
+    if ($status.Count -eq 0) { $status = @('Clean working tree') }
+
+    $content = @(
+        '# AI thread handoff',
+        '',
+        ('Generated: {0}' -f (Get-Date).ToString('o')),
+        ('Branch: `{0}`' -f $branch),
+        '',
+        '## Required startup',
+        '',
+        '1. Read `AGENTS.md` and `.claude/CLAUDE.md` first.',
+        '2. Verify `git status --short` and recent `git log`.',
+        '3. Reuse verified results; do not repeat full scans, map changes, restarts, or full suites unless the new task can invalidate them.',
+        '4. Preserve the Preview -> Confirm -> Backup -> Apply sequence for ASA configuration writes.',
+        '',
+        '## Current task',
+        '',
+        $Task,
+        '',
+        '## Next step',
+        '',
+        $Next,
+        '',
+        '## Working tree at handoff',
+        '',
+        '```text',
+        ($status -join [Environment]::NewLine),
+        '```',
+        '',
+        '## Recent commits',
+        '',
+        '```text',
+        ($commits -join [Environment]::NewLine),
+        '```',
+        '',
+        '## New-thread prompt',
+        '',
+        'Continue the ASA Server project from `AI-THREAD-HANDOFF.md`. Read `AGENTS.md` and `.claude/CLAUDE.md` first, verify Git state, then perform only the recorded next step with targeted reads and tests.'
+    ) -join [Environment]::NewLine
+    [IO.File]::WriteAllText($HandoffPath, $content + [Environment]::NewLine, $Utf8NoBom)
+    return $HandoffPath
+}
 
 function Get-AuditEntries {
     if (-not (Test-Path -LiteralPath $AuditLog)) { return @() }
@@ -51,6 +107,7 @@ function Get-PreflightEstimate([int]$ToolCalls,[int]$RepeatedActions,[int]$FullS
             Level='LOW'
             Detail='Small targeted task. Proceed with focused reads and one targeted verification.'
             ModelRecommendation='Claude: small/fast model such as Haiku when available. Codex: lightweight tier/low reasoning such as Luna when available.'
+            RolloverRecommendation='Continue in the current thread unless the task itself is unrelated to the previous work.'
         }
     }
     if ($score -le 25 -and $FullScans -eq 0 -and $FullTestSuites -le 1) {
@@ -58,12 +115,14 @@ function Get-PreflightEstimate([int]$ToolCalls,[int]$RepeatedActions,[int]$FullS
             Level='MEDIUM'
             Detail='Moderate task. Combine searches and stop if the planned scope expands.'
             ModelRecommendation='Claude: Sonnet. Codex: balanced tier/medium reasoning such as Terra when available.'
+            RolloverRecommendation='Create a handoff first if this is a substantially different task or the thread has already been compacted.'
         }
     }
     return [pscustomobject]@{
         Level='HIGH'
         Detail='Potentially expensive task. Reduce scope or ask the user before continuing.'
         ModelRecommendation='Claude: start with Sonnet and escalate to Opus only if justified. Codex: frontier tier such as Sol only when the task needs it.'
+        RolloverRecommendation='Create AI-THREAD-HANDOFF.md and continue in a fresh thread before doing the task.'
     }
 }
 
@@ -102,12 +161,19 @@ if ($LatestReport) {
 
 if ($Preflight) {
     $estimate = Get-PreflightEstimate $PlannedToolCalls $PlannedRepeatedActions $PlannedFullScans $PlannedFullTestSuites
-    Write-Output ("{0}: {1} Model: {2}" -f $estimate.Level,$estimate.Detail,$estimate.ModelRecommendation)
+    Write-Output ("{0}: {1} Model: {2} Thread: {3}" -f $estimate.Level,$estimate.Detail,$estimate.ModelRecommendation,$estimate.RolloverRecommendation)
+    exit 0
+}
+
+if ($CreateHandoff) {
+    $path = New-ThreadHandoff $CurrentTask $NextStep
+    Write-Output ('Thread handoff created: ' + $path)
+    Write-Output 'Open a new thread and say: Continue the ASA Server project from AI-THREAD-HANDOFF.md.'
     exit 0
 }
 
 if (-not $ShowWindow) {
-    Write-Output 'Run with -ShowWindow, -LatestReport, or -Preflight plus planned activity counts.'
+    Write-Output 'Run with -ShowWindow, -LatestReport, -CreateHandoff, or -Preflight plus planned activity counts.'
     exit 0
 }
 
@@ -117,7 +183,7 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object Windows.Forms.Form
 $form.Text = 'AI usage audit - ASA Manager'
-$form.Size = New-Object Drawing.Size(760, 770)
+$form.Size = New-Object Drawing.Size(760, 825)
 $form.StartPosition = 'CenterScreen'
 $form.BackColor = [Drawing.Color]::FromArgb(25,29,36)
 $form.ForeColor = [Drawing.Color]::FromArgb(238,241,245)
@@ -181,6 +247,7 @@ $preflight.Add_Click({
         "PREFLIGHT USAGE RISK: $($estimate.Level)",
         $estimate.Detail,
         ('Recommended model: ' + $estimate.ModelRecommendation),
+        ('Thread recommendation: ' + $estimate.RolloverRecommendation),
         '',
         ('Planned activity: {0} tool calls, {1} repeated actions, {2} full scans, {3} full test-suite runs.' -f $tools.Value,$repeats.Value,$scans.Value,$suites.Value),
         'This is a relative workload estimate, not an exact credit prediction. Check Settings > Usage for the official balance.'
@@ -200,6 +267,15 @@ $save.Add_Click({
     }
     Save-AuditEntry $entry
     $report.Text=Format-AuditReport $entry
+})
+$handoff=New-Object Windows.Forms.Button
+$handoff.Text='Create new-thread handoff'; $handoff.Location=New-Object Drawing.Point(20,710); $handoff.Size=New-Object Drawing.Size(355,38)
+$handoff.BackColor=[Drawing.Color]::FromArgb(117,92,190); $handoff.ForeColor=[Drawing.Color]::White; $handoff.FlatStyle='Flat'; $form.Controls.Add($handoff)
+$handoff.Add_Click({
+    $path=New-ThreadHandoff $task.Text.Trim() $outcome.Text.Trim()
+    $prompt='Continue the ASA Server project from AI-THREAD-HANDOFF.md. Read AGENTS.md and .claude/CLAUDE.md first, verify Git state, then continue only the recorded next step.'
+    [Windows.Forms.Clipboard]::SetText($prompt)
+    $report.Text="Handoff created:`n$path`n`nThe new-thread prompt is copied to the clipboard. Open a new Codex or Claude thread and paste it."
 })
 $open.Add_Click({ if(-not(Test-Path $AuditFolder)){[void](New-Item -ItemType Directory -Path $AuditFolder)}; Start-Process explorer.exe $AuditFolder })
 $close.Add_Click({$form.Close()})

@@ -9,6 +9,7 @@ config-snapshots/
 test-results/
 .image-review/
 usage-audit/
+AI-THREAD-HANDOFF.md
 
 # Server/game binaries and SteamCMD
 server/
