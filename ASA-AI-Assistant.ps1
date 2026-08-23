@@ -289,6 +289,46 @@ function ConvertTo-AsaRecipeSummaryText {
     return (@($resourceMatches | ForEach-Object { $_.Groups['r'].Value + ' x' + $_.Groups['a'].Value }) -join ', ')
 }
 
+function Format-AsaRelocationPreviewText {
+    <#
+    Renders one validated relocation as a single, unambiguous MOVE block --
+    never as two unrelated-looking changes -- for CLI/Panel preview. Pure
+    formatting; never writes anything, matches whatever the validated
+    relocation object (already computed by Get-AsaSettingRelocationPlan)
+    actually says it will do.
+    #>
+    param([Parameter(Mandatory)]$Relocation)
+
+    $valueText = ($Relocation.SourceValues -join ', ')
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('MOVE')
+    [void]$lines.Add("$($Relocation.Setting)=$valueText")
+    [void]$lines.Add('')
+    [void]$lines.Add('FROM:')
+    [void]$lines.Add("$($Relocation.FromTarget) $($Relocation.FromSection)")
+    [void]$lines.Add('')
+    [void]$lines.Add('TO:')
+    [void]$lines.Add("$($Relocation.ToTarget) $($Relocation.ToSection)")
+
+    if ($Relocation.DestinationHadExisting) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Destination conflict:')
+        if ($Relocation.WriteDestination) {
+            [void]$lines.Add("The destination already had a value for $($Relocation.Setting); it will be overwritten with the source value ($valueText).")
+        }
+        else {
+            [void]$lines.Add("The destination already had this value; the duplicate source entry will simply be removed. Nothing at the destination changes.")
+        }
+    }
+
+    [void]$lines.Add('')
+    [void]$lines.Add('Reason:')
+    [void]$lines.Add([string]$Relocation.Reason)
+    [void]$lines.Add('')
+    [void]$lines.Add("Value preserved: $valueText")
+    return ($lines -join "`r`n")
+}
+
 function Get-AsaAiAllowedActionText {
     $lines = foreach ($key in $script:AllowedActions.Keys) {
         "- ${key}: $($script:AllowedActions[$key])"
@@ -499,13 +539,50 @@ function ConvertTo-AsaValidatedProposal {
         })
     }
 
+    $validatedRelocations = New-Object System.Collections.Generic.List[object]
+    $relocationCandidates = @($RawProposal.relocations)
+    if ($relocationCandidates.Count -gt 0) {
+        $paths = Get-AsaAiFixedConfigPaths
+        $guLines = if (Test-Path -LiteralPath $paths.GameUserSettings) { [IO.File]::ReadAllLines($paths.GameUserSettings) } else { @() }
+        $giLines = if (Test-Path -LiteralPath $paths.GameIni) { [IO.File]::ReadAllLines($paths.GameIni) } else { @() }
+
+        foreach ($relocation in $relocationCandidates) {
+            $settingName = [string]$relocation.setting
+            if ([string]::IsNullOrWhiteSpace($settingName)) {
+                $rejected.Add('A proposed relocation has no setting name.')
+                continue
+            }
+            $plan = Get-AsaSettingRelocationPlan -SettingName $settingName -GameUserSettingsLines $guLines -GameIniLines $giLines
+            if (-not $plan.Success) {
+                $rejected.Add("Relocation refused for ${settingName}: $($plan.Error)")
+                continue
+            }
+            $validatedRelocations.Add([pscustomobject]@{
+                Setting          = $plan.Setting
+                FromTarget       = $plan.FromTarget
+                FromSection      = $plan.FromSection
+                ToTarget         = $plan.ToTarget
+                ToSection        = $plan.ToSection
+                Repeatable       = $plan.Repeatable
+                SourceLines      = $plan.SourceLines
+                SourceValues     = $plan.SourceValues
+                WriteDestination = $plan.WriteDestination
+                DestinationLines = $plan.DestinationLines
+                DestinationHadExisting = $plan.DestinationHadExisting
+                Reason           = [string]$relocation.reason
+                PlanReason       = $plan.Reason
+            })
+        }
+    }
+
     return [pscustomobject]@{
-        Summary  = [string]$RawProposal.summary
-        Changes  = $validated.ToArray()
-        Actions  = $validatedActions.ToArray()
-        Recipes  = $validatedRecipes.ToArray()
-        Rejected = $rejected.ToArray()
-        ReadOnly = $true
+        Summary     = [string]$RawProposal.summary
+        Changes     = $validated.ToArray()
+        Actions     = $validatedActions.ToArray()
+        Recipes     = $validatedRecipes.ToArray()
+        Relocations = $validatedRelocations.ToArray()
+        Rejected    = $rejected.ToArray()
+        ReadOnly    = $true
     }
 }
 
@@ -514,12 +591,14 @@ function Test-AsaAiApplyProposal {
 
     $proposalChanges = @($Proposal.Changes)
     $proposalRecipes = @($Proposal.Recipes)
-    if ($proposalChanges.Count -eq 0 -and $proposalRecipes.Count -eq 0) {
+    $proposalRelocations = @($Proposal.Relocations)
+    if ($proposalChanges.Count -eq 0 -and $proposalRecipes.Count -eq 0 -and $proposalRelocations.Count -eq 0) {
         return [pscustomobject]@{
-            Success = $false
-            Changes = @()
-            Recipes = @()
-            Error   = 'Proposal must contain at least one setting change or custom recipe.'
+            Success     = $false
+            Changes     = @()
+            Recipes     = @()
+            Relocations = @()
+            Error       = 'Proposal must contain at least one setting change, custom recipe, or relocation.'
         }
     }
 
@@ -634,20 +713,70 @@ function Test-AsaAiApplyProposal {
         })
     }
 
+    # Relocations are always re-derived from scratch against the CURRENT live
+    # config -- the destination (and even whether the source still exists in
+    # the wrong place) is never trusted from an earlier layer, only the
+    # setting name (and an optional caller-supplied conflict resolution).
+    $relocations = New-Object System.Collections.Generic.List[object]
+    if ($proposalRelocations.Count -gt 0) {
+        $paths = Get-AsaAiFixedConfigPaths
+        $currentGuLines = if (Test-Path -LiteralPath $paths.GameUserSettings) { [IO.File]::ReadAllLines($paths.GameUserSettings) } else { @() }
+        $currentGiLines = if (Test-Path -LiteralPath $paths.GameIni) { [IO.File]::ReadAllLines($paths.GameIni) } else { @() }
+
+        foreach ($relocation in $proposalRelocations) {
+            $settingName = [string]$relocation.Setting
+            if ([string]::IsNullOrWhiteSpace($settingName)) {
+                $errors.Add('A proposed relocation has no setting name.')
+                continue
+            }
+
+            $planParams = @{
+                SettingName            = $settingName
+                GameUserSettingsLines  = $currentGuLines
+                GameIniLines           = $currentGiLines
+            }
+            $resolution = [string]$relocation.Resolution
+            if ($resolution -in @('use_source', 'keep_destination')) { $planParams.Resolution = $resolution }
+
+            $plan = Get-AsaSettingRelocationPlan @planParams
+            if (-not $plan.Success) {
+                $errors.Add("Relocation refused for ${settingName}: $($plan.Error)")
+                continue
+            }
+
+            $relocations.Add([pscustomobject]@{
+                Setting          = $plan.Setting
+                FromTarget       = $plan.FromTarget
+                FromSection      = $plan.FromSection
+                ToTarget         = $plan.ToTarget
+                ToSection        = $plan.ToSection
+                Repeatable       = $plan.Repeatable
+                SourceLines      = $plan.SourceLines
+                SourceValues     = $plan.SourceValues
+                WriteDestination = $plan.WriteDestination
+                DestinationLines = $plan.DestinationLines
+                DestinationHadExisting = $plan.DestinationHadExisting
+                Reason           = [string]$relocation.Reason
+            })
+        }
+    }
+
     if ($errors.Count -gt 0) {
         return [pscustomobject]@{
-            Success = $false
-            Changes = @()
-            Recipes = @()
-            Error   = ($errors.ToArray() -join "`n")
+            Success     = $false
+            Changes     = @()
+            Recipes     = @()
+            Relocations = @()
+            Error       = ($errors.ToArray() -join "`n")
         }
     }
 
     return [pscustomobject]@{
-        Success = $true
-        Changes = $changes.ToArray()
-        Recipes = $recipes.ToArray()
-        Error   = ''
+        Success     = $true
+        Changes     = $changes.ToArray()
+        Recipes     = $recipes.ToArray()
+        Relocations = $relocations.ToArray()
+        Error       = ''
     }
 }
 
@@ -814,7 +943,7 @@ function Add-AsaChangelogEntry {
         [string]$BackupPath = ''
     )
 
-    $changelogPath = Join-Path $PSScriptRoot 'SETTINGS-CHANGELOG.md'
+    $changelogPath = (Get-AsaAiFixedConfigPaths).ChangelogPath
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "- **$timestamp** &mdash; ``$Key`` in $TargetFile`: ``$OldValue`` -> ``$NewValue``."
     if ($Reason) { $line += " Reason: $Reason" }
@@ -823,11 +952,19 @@ function Add-AsaChangelogEntry {
 }
 
 function Get-AsaAiFixedConfigPaths {
+    # Test-only redirection hook: when a test sets this script-scope variable
+    # to a pscustomobject with the same four properties, every path-consuming
+    # function in this file (backup, apply, rollback, changelog) transparently
+    # targets that isolated fixture instead of the real, live server config.
+    # Production code paths never set this, so normal behavior is unchanged.
+    if ($script:AsaAiTestConfigPathOverride) { return $script:AsaAiTestConfigPathOverride }
+
     $configRoot = Join-Path $PSScriptRoot 'server\ShooterGame\Saved\Config\WindowsServer'
     return [pscustomobject]@{
         GameUserSettings = Join-Path $configRoot 'GameUserSettings.ini'
         GameIni          = Join-Path $configRoot 'Game.ini'
         BackupRoot       = Join-Path $PSScriptRoot 'backups\AI-Config'
+        ChangelogPath    = Join-Path $PSScriptRoot 'SETTINGS-CHANGELOG.md'
     }
 }
 
@@ -912,6 +1049,47 @@ function New-AsaAiPreparedApply {
             $gameIniLines = Set-AsaIniSectionRepeatedLinesInMemory -Lines $gameIniLines -Section $recipeSection -Key $recipeKey -NewLines ([string[]]$existingRecipeLines.ToArray())
             $writeGameIni = $true
         }
+
+        $relocationsApplied = New-Object System.Collections.Generic.List[object]
+        foreach ($relocation in $validated.Relocations) {
+            # Remove the source occurrence(s) -- unconditional whenever a plan
+            # succeeded, regardless of whether the destination is written.
+            if ($relocation.FromTarget -ceq 'GameUserSettings.ini') {
+                $gameUserLines = Set-AsaIniSectionRepeatedLinesInMemory -Lines $gameUserLines -Section $relocation.FromSection -Key $relocation.Setting -NewLines @()
+                $writeGameUserSettings = $true
+            }
+            elseif ($relocation.FromTarget -ceq 'Game.ini') {
+                $gameIniLines = Set-AsaIniSectionRepeatedLinesInMemory -Lines $gameIniLines -Section $relocation.FromSection -Key $relocation.Setting -NewLines @()
+                $writeGameIni = $true
+            }
+            else {
+                throw "Blocked source file for relocation: $($relocation.Setting)"
+            }
+
+            if ($relocation.WriteDestination) {
+                if ($relocation.ToTarget -ceq 'GameUserSettings.ini') {
+                    $gameUserLines = Set-AsaIniSectionRepeatedLinesInMemory -Lines $gameUserLines -Section $relocation.ToSection -Key $relocation.Setting -NewLines ([string[]]$relocation.DestinationLines)
+                    $writeGameUserSettings = $true
+                }
+                elseif ($relocation.ToTarget -ceq 'Game.ini') {
+                    $gameIniLines = Set-AsaIniSectionRepeatedLinesInMemory -Lines $gameIniLines -Section $relocation.ToSection -Key $relocation.Setting -NewLines ([string[]]$relocation.DestinationLines)
+                    $writeGameIni = $true
+                }
+                else {
+                    throw "Blocked destination file for relocation: $($relocation.Setting)"
+                }
+            }
+
+            $relocationsApplied.Add([pscustomobject]@{
+                Setting     = $relocation.Setting
+                FromTarget  = $relocation.FromTarget
+                FromSection = $relocation.FromSection
+                ToTarget    = $relocation.ToTarget
+                ToSection   = $relocation.ToSection
+                Value       = ($relocation.SourceValues -join ', ')
+                Reason      = $relocation.Reason
+            })
+        }
     }
     catch {
         return [pscustomobject]@{
@@ -927,6 +1105,7 @@ function New-AsaAiPreparedApply {
         Changes               = $validated.Changes
         ChangesWithOldValues  = $changesWithOldValues.ToArray()
         RecipesApplied        = $recipesApplied.ToArray()
+        RelocationsApplied    = $relocationsApplied.ToArray()
         GameUserSettingsPath  = $paths.GameUserSettings
         GameIniPath           = $paths.GameIni
         BackupRoot            = $paths.BackupRoot
@@ -1103,16 +1282,28 @@ function Invoke-AsaAiApplyProposal {
         catch { }
     }
 
+    foreach ($relocation in $prepared.RelocationsApplied) {
+        try {
+            Add-AsaChangelogEntry -Key $relocation.Setting -NewValue "moved to $($relocation.ToTarget) $($relocation.ToSection) (value $($relocation.Value) preserved)" -OldValue "was at $($relocation.FromTarget) $($relocation.FromSection)" -TargetFile $relocation.ToTarget -Reason $relocation.Reason -BackupPath $backupPath
+        }
+        catch { }
+    }
+
     $recipeCount = @($prepared.RecipesApplied).Count
-    $messageText = "Applied $($prepared.Changes.Count) validated setting(s)."
-    if ($recipeCount -gt 0) { $messageText = "Applied $($prepared.Changes.Count) validated setting(s) and $recipeCount custom recipe(s)." }
+    $relocationCount = @($prepared.RelocationsApplied).Count
+    $appliedParts = New-Object System.Collections.Generic.List[string]
+    if ($prepared.Changes.Count -gt 0) { $appliedParts.Add("$($prepared.Changes.Count) validated setting(s)") }
+    if ($recipeCount -gt 0) { $appliedParts.Add("$recipeCount custom recipe(s)") }
+    if ($relocationCount -gt 0) { $appliedParts.Add("$relocationCount relocation(s)") }
+    $messageText = if ($appliedParts.Count -gt 0) { 'Applied ' + ($appliedParts -join ' and ') + '.' } else { 'Nothing to apply.' }
 
     return [pscustomobject]@{
-        Success    = $true
-        Message    = $messageText
-        BackupPath = $backupPath
-        Changes    = $prepared.Changes
-        Recipes    = $prepared.RecipesApplied
+        Success     = $true
+        Message     = $messageText
+        BackupPath  = $backupPath
+        Changes     = $prepared.Changes
+        Recipes     = $prepared.RecipesApplied
+        Relocations = $prepared.RelocationsApplied
     }
 }
 
@@ -1152,12 +1343,114 @@ function Get-AsaAiCurrentRecipeOverridesText {
     return ($summaries -join "`n")
 }
 
+# Phrases that deterministically identify which diagnostic finding category a
+# request is talking about. Matching here NEVER touches the local model --
+# it's a plain keyword check so a "fix the wrong-file findings" request can
+# never be reinterpreted or have findings invented for it.
+$script:AsaDiagnosticCategoryPhrases = [ordered]@{
+    'WRONG TARGET FILE' = @('wrong target file', 'found in the wrong file', 'in the wrong file', 'wrong file')
+    'WRONG SECTION'      = @('wrong section')
+}
+
+function Get-AsaAiReferencedDiagnosticCategories {
+    <# Deterministic keyword match only -- never delegated to the model. #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Prompt)
+
+    $lower = $Prompt.ToLowerInvariant()
+    $categories = New-Object System.Collections.Generic.List[string]
+    foreach ($category in $script:AsaDiagnosticCategoryPhrases.Keys) {
+        foreach ($phrase in $script:AsaDiagnosticCategoryPhrases[$category]) {
+            if ($lower.Contains($phrase)) {
+                if (-not $categories.Contains($category)) { [void]$categories.Add($category) }
+                break
+            }
+        }
+    }
+    return $categories.ToArray()
+}
+
+function Get-AsaAiRelocationProposalFromDiagnostics {
+    <#
+    Builds a relocation-only proposal directly from the CURRENT diagnostic
+    findings in the given categories -- no model call, no guessing which
+    findings were meant. Only categories that represent a setting sitting in
+    the wrong INI file/section are ever passed in here by the caller; each
+    candidate is still independently re-validated by
+    Get-AsaSettingRelocationPlan (support status, value validity, conflicts),
+    so an unsafe finding is excluded even if it somehow slipped through.
+    #>
+    param([Parameter(Mandatory)][string[]]$Categories)
+
+    $diagnostics = Invoke-AsaConfigDiagnostics
+    $paths = Get-AsaAiFixedConfigPaths
+    $guLines = if (Test-Path -LiteralPath $paths.GameUserSettings) { [IO.File]::ReadAllLines($paths.GameUserSettings) } else { @() }
+    $giLines = if (Test-Path -LiteralPath $paths.GameIni) { [IO.File]::ReadAllLines($paths.GameIni) } else { @() }
+
+    $candidateFindings = @($diagnostics.Findings | Where-Object { $Categories -contains $_.Category })
+    $seen = @{}
+    $relocations = New-Object System.Collections.Generic.List[object]
+    $rejected = New-Object System.Collections.Generic.List[string]
+
+    foreach ($finding in $candidateFindings) {
+        $baseName = Get-AsaSettingBaseName -Key $finding.Key
+        if ($seen.ContainsKey($baseName)) { continue }
+        $seen[$baseName] = $true
+
+        $plan = Get-AsaSettingRelocationPlan -SettingName $baseName -GameUserSettingsLines $guLines -GameIniLines $giLines
+        if (-not $plan.Success) {
+            $rejected.Add("Relocation refused for ${baseName}: $($plan.Error)")
+            continue
+        }
+        $relocations.Add([pscustomobject]@{
+            Setting          = $plan.Setting
+            FromTarget       = $plan.FromTarget
+            FromSection      = $plan.FromSection
+            ToTarget         = $plan.ToTarget
+            ToSection        = $plan.ToSection
+            Repeatable       = $plan.Repeatable
+            SourceLines      = $plan.SourceLines
+            SourceValues     = $plan.SourceValues
+            WriteDestination = $plan.WriteDestination
+            DestinationLines = $plan.DestinationLines
+            DestinationHadExisting = $plan.DestinationHadExisting
+            Reason           = $plan.Reason
+        })
+    }
+
+    $categoryText = $Categories -join ', '
+    $summary = if ($relocations.Count -gt 0) {
+        "Found $($relocations.Count) setting(s) currently misplaced per diagnostics ($categoryText) and proposed relocating each to its authoritative location, preserving its current value. No other settings were changed."
+    }
+    else {
+        "No safely relocatable settings were found among the current $categoryText diagnostic findings."
+    }
+
+    return [pscustomobject]@{
+        Summary     = $summary
+        Changes     = @()
+        Actions     = @()
+        Recipes     = @()
+        Relocations = $relocations.ToArray()
+        Rejected    = $rejected.ToArray()
+        ReadOnly    = $true
+    }
+}
+
 function Get-AsaAiProposal {
     param(
         [Parameter(Mandatory)][string]$Prompt,
         [string]$Model = 'qwen3:8b',
         [string]$OllamaBaseUrl = 'http://127.0.0.1:11434'
     )
+
+    # A request that names a specific diagnostic category ("fix the WRONG
+    # TARGET FILE findings") is resolved entirely deterministically against
+    # the CURRENT diagnostics -- the local model never sees this request and
+    # never decides which findings/settings/destinations are involved.
+    $referencedCategories = Get-AsaAiReferencedDiagnosticCategories -Prompt $Prompt
+    if ($referencedCategories.Count -gt 0) {
+        return Get-AsaAiRelocationProposalFromDiagnostics -Categories $referencedCategories
+    }
 
     $allowedKeys = [object[]]@($script:AllowedSettings.Keys)
     $allowedActionKeys = [object[]]@($script:AllowedActions.Keys)
@@ -1215,8 +1508,20 @@ function Get-AsaAiProposal {
                     required = @('item','resources','reason')
                 }
             }
+            relocations = @{
+                type = 'array'
+                items = @{
+                    type = 'object'
+                    additionalProperties = $false
+                    properties = @{
+                        setting = @{ type = 'string' }
+                        reason  = @{ type = 'string' }
+                    }
+                    required = @('setting','reason')
+                }
+            }
         }
-        required = @('summary','changes','actions','recipes')
+        required = @('summary','changes','actions','recipes','relocations')
     }
 
     $allowedText = Get-AsaAiAllowedSettingText
@@ -1228,7 +1533,8 @@ You are the settings and operations assistant for a private ARK: Survival Ascend
 You may ONLY propose settings from the allow-list below, ONLY trigger operations from the allow-list of actions below, and ONLY propose custom crafting recipes using item/resource names from the known items list below. Never propose shell commands, PowerShell, file operations, passwords, paths, mods, firewall changes, deletes, or arbitrary INI keys, actions, or item class strings.
 Return only JSON matching the supplied schema.
 Every numeric value must be a plain invariant decimal string such as "4", "0.5", or "12.0". Do not include x, %, units, or explanatory text in value.
-If the request cannot be satisfied using only the allow-lists, return empty changes/actions/recipes arrays and explain why in summary.
+If the request cannot be satisfied using only the allow-lists, return empty changes/actions/recipes/relocations arrays and explain why in summary.
+Use "relocations" ONLY when the user names a specific setting that is currently stored in the wrong INI file or section and should be moved to its correct location (e.g. "move PassiveTameIntervalMultiplier to the right file"). In each relocation entry, "setting" is just the setting's name -- never guess or state a destination file or section yourself; the correct location is always looked up from the server's own knowledge base and verified independently, not decided by you. If the setting isn't actually misplaced, isn't a known supported setting, or you are not sure, leave relocations empty and explain why in summary instead of guessing.
 Each allowed setting below shows its CURRENT VALUE, which is the server's actual live value right now, not a vanilla default. For any relative request (boost/increase/lower/reduce/further/more/less/faster/slower/higher/lower), you MUST calculate the new value starting from that CURRENT VALUE, never from 1.0 or any other assumed baseline. Example: if a setting's CURRENT VALUE is 30.2 and the user asks to "boost it further", propose something meaningfully above 30.2 (for example 40 or 45), never a small number like 2 just because it looks like a big multiplier in isolation -- 2 would be a severe cut from 30.2, not a boost. If you are not given a specific target number, pick a value roughly 20-50% above (or below, for a reduction request) the CURRENT VALUE shown, staying within the allowed range.
 When a user asks for shorter nights, increase NightTimeSpeedScale. When a user asks for longer days, decrease DayTimeSpeedScale.
 When wild dinos feel too high-level or too tanky/aggressive, decrease OverrideOfficialDifficulty (and optionally PerLevelStatsMultiplier_DinoWild[0]/[8] to soften their health/damage growth per level), rather than touching an unrelated setting.
@@ -1293,7 +1599,7 @@ function Invoke-AsaAiRequest {
     $proposal = Get-AsaAiProposal -Prompt $Prompt -Model $Model -OllamaBaseUrl $OllamaBaseUrl
     $steps = New-Object System.Collections.Generic.List[object]
 
-    $hasChanges = (@($proposal.Changes).Count -gt 0) -or (@($proposal.Recipes).Count -gt 0)
+    $hasChanges = (@($proposal.Changes).Count -gt 0) -or (@($proposal.Recipes).Count -gt 0) -or (@($proposal.Relocations).Count -gt 0)
     $requestedActionNames = @($proposal.Actions | ForEach-Object { $_.Name })
     $hasRestoringAction = @('StartServer', 'Restart', 'UpdateAndRestart', 'SafeBackup') | Where-Object { $requestedActionNames -contains $_ }
 
@@ -1327,12 +1633,13 @@ function Invoke-AsaAiRequest {
     }
 
     return [pscustomobject]@{
-        Summary  = $proposal.Summary
-        Changes  = $proposal.Changes
-        Actions  = $proposal.Actions
-        Recipes  = $proposal.Recipes
-        Rejected = $proposal.Rejected
-        Steps    = $steps.ToArray()
+        Summary     = $proposal.Summary
+        Changes     = $proposal.Changes
+        Actions     = $proposal.Actions
+        Recipes     = $proposal.Recipes
+        Relocations = $proposal.Relocations
+        Rejected    = $proposal.Rejected
+        Steps       = $steps.ToArray()
     }
 }
 

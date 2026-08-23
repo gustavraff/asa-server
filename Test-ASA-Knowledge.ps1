@@ -386,6 +386,288 @@ Assert-True ([int]$index.Counts.core -eq 149) 'Index reports the expected core d
 Assert-True (@($index.Settings).Count -gt 400) 'Merged index contains settings from all datasets'
 
 # ---------------------------------------------------------------------------
+# 16. Setting relocation planning (Get-AsaSettingRelocationPlan) -- pure,
+#     deterministic, read-only. Covers the "existing setting stuck in the
+#     wrong INI file/section" capability end to end at the planning layer.
+# ---------------------------------------------------------------------------
+
+# 16a. Valid relocation: setting in the wrong FILE entirely (the motivating
+# example from the request).
+$relocGU = @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2')
+$relocGI = @('[/Script/ShooterGame.ShooterGameMode]')
+$validPlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines $relocGU -GameIniLines $relocGI
+Assert-True $validPlan.Success 'Relocation plan: valid relocation (wrong source file) succeeds'
+Assert-True ($validPlan.FromTarget -eq 'GameUserSettings.ini' -and $validPlan.FromSection -eq '[ServerSettings]') 'Relocation plan: source file/section identified correctly'
+Assert-True (($validPlan.SourceValues -join ',') -eq '0.2') 'Relocation plan: current value preserved on the plan'
+
+# 16b. Destination always comes from the authoritative catalog -- verified as
+# an invariant (the schema never accepts a caller-supplied destination at
+# all, so there is no "wrong destination in the proposal" input to reject;
+# instead we assert the derived destination always equals the catalog).
+$catalogEntry = @(Find-AsaSettingExact -Name 'PassiveTameIntervalMultiplier') | Select-Object -First 1
+Assert-True ($validPlan.ToTarget -ceq $catalogEntry.target -and $validPlan.ToSection -ceq $catalogEntry.section) 'Relocation plan: destination always exactly matches the authoritative knowledge-base target/section'
+
+# 16c. Valid relocation: setting in the correct FILE but wrong SECTION.
+$wrongSectionPlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]') -GameIniLines @('[SomeOtherSection]', 'PassiveTameIntervalMultiplier=0.3')
+Assert-True $wrongSectionPlan.Success 'Relocation plan: valid relocation (wrong source section, correct file) succeeds'
+Assert-True ($wrongSectionPlan.FromTarget -eq 'Game.ini' -and $wrongSectionPlan.FromSection -eq '[SomeOtherSection]') 'Relocation plan: wrong-section source identified correctly'
+Assert-True ($wrongSectionPlan.ToTarget -eq 'Game.ini' -and $wrongSectionPlan.ToSection -ceq $catalogEntry.section) 'Relocation plan: wrong-section relocation still resolves to the authoritative section'
+
+# 16d. Unsupported setting is refused.
+$unsupportedPlan = Get-AsaSettingRelocationPlan -SettingName 'MaxPlayers' -GameUserSettingsLines @('[ServerSettings]', 'MaxPlayers=10') -GameIniLines @()
+Assert-True (-not $unsupportedPlan.Success) 'Relocation plan: UNSUPPORTED setting is refused'
+Assert-True ($unsupportedPlan.Error -like '*UNSUPPORTED*') 'Relocation plan: UNSUPPORTED refusal explains why'
+
+# 16e. Blocked (never_auto_apply) setting is refused.
+$blockedPlan = Get-AsaSettingRelocationPlan -SettingName 'ActiveMods' -GameUserSettingsLines @() -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]', 'ActiveMods=12345')
+Assert-True (-not $blockedPlan.Success) 'Relocation plan: BLOCKED setting is refused'
+Assert-True ($blockedPlan.Error -like '*BLOCKED*') 'Relocation plan: BLOCKED refusal explains why'
+
+# 16f. Unverified setting is refused.
+$unverifiedPlan = Get-AsaSettingRelocationPlan -SettingName '-NoDinosExceptForcedSpawn' -GameUserSettingsLines @('[ServerSettings]', '-NoDinosExceptForcedSpawn=True') -GameIniLines @()
+Assert-True (-not $unverifiedPlan.Success) 'Relocation plan: UNVERIFIED setting is refused'
+Assert-True ($unverifiedPlan.Error -like '*UNVERIFIED*') 'Relocation plan: UNVERIFIED refusal explains why'
+
+# 16g. Unknown/mod setting is refused.
+$unknownPlan = Get-AsaSettingRelocationPlan -SettingName 'NeedsPowerToActivateAquaticCompartments' -GameUserSettingsLines @('[ServerSettings]', 'NeedsPowerToActivateAquaticCompartments=True') -GameIniLines @()
+Assert-True (-not $unknownPlan.Success) 'Relocation plan: unknown/mod setting is refused'
+Assert-True ($unknownPlan.Error -like '*not in the authoritative*') 'Relocation plan: unknown-setting refusal explains why'
+
+# 16h. Value validation still applies at the source before relocating.
+$outOfRangePlan = Get-AsaSettingRelocationPlan -SettingName 'SupplyCrateLootQualityMultiplier' -GameUserSettingsLines @('[ServerSettings]', 'SupplyCrateLootQualityMultiplier=99') -GameIniLines @()
+Assert-True (-not $outOfRangePlan.Success) 'Relocation plan: out-of-range source value is refused'
+Assert-True ($outOfRangePlan.Error -like '*maximum*') 'Relocation plan: out-of-range refusal names the violated bound'
+
+# 16i. Destination already has the SAME value -- unambiguous, proceeds
+# without a conflict (source duplicate removed, destination left as-is).
+$sameValuePlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2') -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]', 'PassiveTameIntervalMultiplier=0.2')
+Assert-True ($sameValuePlan.Success -and -not $sameValuePlan.Conflict) 'Relocation plan: destination with the SAME value is not a conflict'
+Assert-True (-not $sameValuePlan.WriteDestination) 'Relocation plan: destination is left untouched when it already matches'
+
+# 16j. Destination already has a DIFFERENT value -- refused without an
+# explicit resolution; never silently overwritten.
+$conflictPlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2') -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]', 'PassiveTameIntervalMultiplier=0.5')
+Assert-True (-not $conflictPlan.Success -and $conflictPlan.Conflict) 'Relocation plan: destination with a DIFFERENT value is refused as a conflict, not silently overwritten'
+Assert-True ($conflictPlan.DestinationValue -eq '0.5' -and $conflictPlan.SourceValue -eq '0.2') 'Relocation plan: conflict reports both the destination and source values'
+
+# 16j-2. Explicit resolutions deterministically resolve the same conflict.
+$useSourcePlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2') -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]', 'PassiveTameIntervalMultiplier=0.5') -Resolution use_source
+Assert-True ($useSourcePlan.Success -and $useSourcePlan.WriteDestination -and ($useSourcePlan.DestinationLines -join ',') -eq 'PassiveTameIntervalMultiplier=0.2') 'Relocation plan: use_source resolution overwrites the destination with the source value'
+$keepDestPlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2') -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]', 'PassiveTameIntervalMultiplier=0.5') -Resolution keep_destination
+Assert-True ($keepDestPlan.Success -and -not $keepDestPlan.WriteDestination) 'Relocation plan: keep_destination resolution leaves the existing destination value untouched'
+
+# 16k. Repeatable settings are moved as a whole set, not treated as a single
+# scalar value.
+$repeatableGameIni = @(
+    '[ServerSettings]'
+    'ConfigOverrideItemCraftingCosts=(ItemClassString="A",BaseCraftingResourceRequirements=((ResourceItemTypeString="B",BaseResourceRequirement=1.0,bCraftingRequireExactResourceType=False)))'
+    'ConfigOverrideItemCraftingCosts=(ItemClassString="C",BaseCraftingResourceRequirements=((ResourceItemTypeString="D",BaseResourceRequirement=2.0,bCraftingRequireExactResourceType=False)))'
+)
+$repeatablePlan = Get-AsaSettingRelocationPlan -SettingName 'ConfigOverrideItemCraftingCosts' -GameUserSettingsLines $repeatableGameIni -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]')
+Assert-True ($repeatablePlan.Success -and $repeatablePlan.Repeatable) 'Relocation plan: repeatable setting is recognized as repeatable, not scalar'
+Assert-True (@($repeatablePlan.SourceLines).Count -eq 2) 'Relocation plan: ALL repeatable source lines are captured, not just the first'
+Assert-True (@($repeatablePlan.DestinationLines).Count -eq 2) 'Relocation plan: ALL repeatable lines are carried over to the destination'
+
+# 16l. A setting that is not documented as repeatable but appears more than
+# once at the source is refused rather than silently picking one.
+$duplicateScalarPlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2', 'PassiveTameIntervalMultiplier=0.4') -GameIniLines @()
+Assert-True (-not $duplicateScalarPlan.Success) 'Relocation plan: duplicate non-repeatable source lines are refused'
+
+# 16m. Nothing to relocate: already at the authoritative location.
+$alreadyCorrectPlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines @('[ServerSettings]') -GameIniLines @('[/Script/ShooterGame.ShooterGameMode]', 'PassiveTameIntervalMultiplier=0.2')
+Assert-True (-not $alreadyCorrectPlan.Success) 'Relocation plan: a setting already at its authoritative location has nothing to relocate'
+
+# ---------------------------------------------------------------------------
+# 17. Preview text -- shows a relocation as one clear MOVE, never as two
+#     unrelated changes; pure formatting, no file access at all.
+# ---------------------------------------------------------------------------
+$previewFinding = [pscustomobject]@{
+    Setting = 'PassiveTameIntervalMultiplier'; FromTarget = 'GameUserSettings.ini'; FromSection = '[ServerSettings]'
+    ToTarget = 'Game.ini'; ToSection = '[/script/shootergame.shootergamemode]'; SourceValues = @('0.2')
+    DestinationHadExisting = $false; WriteDestination = $true; Reason = 'Authoritative ASA knowledge base specifies Game.ini as the correct target.'
+}
+$previewText = Format-AsaRelocationPreviewText -Relocation $previewFinding
+Assert-True ($previewText -like '*MOVE*') 'Preview: shows MOVE, not a generic change label'
+Assert-True ($previewText -like '*PassiveTameIntervalMultiplier=0.2*') 'Preview: shows the setting and its preserved value'
+Assert-True ($previewText -match ('FROM:[\s\S]*' + [regex]::Escape('GameUserSettings.ini [ServerSettings]'))) 'Preview: shows the source location'
+Assert-True ($previewText -match ('TO:[\s\S]*' + [regex]::Escape('Game.ini [/script/shootergame.shootergamemode]'))) 'Preview: shows the destination location'
+Assert-True ($previewText -like '*Reason:*') 'Preview: includes the reason'
+Assert-True ($previewText -like '*Value preserved: 0.2*') 'Preview: explicitly confirms the value is preserved'
+
+$previewConflictFinding = $previewFinding.PSObject.Copy()
+$previewConflictFinding.DestinationHadExisting = $true
+$previewConflictFinding.WriteDestination = $true
+$conflictPreviewText = Format-AsaRelocationPreviewText -Relocation $previewConflictFinding
+Assert-True ($conflictPreviewText -like '*Destination conflict:*') 'Preview: shows a destination conflict clearly when present'
+
+# ---------------------------------------------------------------------------
+# 18. Full relocation apply pipeline -- fixture-based, NEVER touches the live
+#     GameUserSettings.ini/Game.ini. Get-AsaAiFixedConfigPaths is redirected
+#     via $script:AsaAiTestConfigPathOverride to an isolated temp directory.
+# ---------------------------------------------------------------------------
+$serverRunningForRelocationTests = [bool](Get-Process -Name 'ArkAscendedServer' -ErrorAction SilentlyContinue)
+if ($serverRunningForRelocationTests) {
+    Write-Host 'SKIP: ASA server process is currently running -- Invoke-AsaAiApplyProposal refuses to write by design, so the fixture-based apply/backup/rollback relocation tests are skipped this run.' -ForegroundColor Yellow
+}
+else {
+    $relocFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('asa-relocation-test-' + [guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory -Path $relocFixtureRoot -Force)
+    $relocFixtureGU = Join-Path $relocFixtureRoot 'GameUserSettings.ini'
+    $relocFixtureGI = Join-Path $relocFixtureRoot 'Game.ini'
+    $relocFixtureBackups = Join-Path $relocFixtureRoot 'backups'
+    $relocFixtureChangelog = Join-Path $relocFixtureRoot 'CHANGELOG.md'
+    [void](New-Item -ItemType File -Path $relocFixtureChangelog -Force)
+
+    $relocOriginalGU = @('[ServerSettings]', 'PassiveTameIntervalMultiplier=0.2', 'ServerHardcore=False')
+    $relocOriginalGI = @('[/Script/ShooterGame.ShooterGameMode]', 'BabyMatureSpeedMultiplier=1.0')
+
+    try {
+        # --- 18a. Successful relocation: removes source, adds destination, backs up both files first ---
+        [IO.File]::WriteAllLines($relocFixtureGU, $relocOriginalGU)
+        [IO.File]::WriteAllLines($relocFixtureGI, $relocOriginalGI)
+        $script:AsaAiTestConfigPathOverride = [pscustomobject]@{
+            GameUserSettings = $relocFixtureGU; GameIni = $relocFixtureGI; BackupRoot = $relocFixtureBackups; ChangelogPath = $relocFixtureChangelog
+        }
+
+        $applyProposal = [pscustomobject]@{
+            Changes = @(); Recipes = @()
+            Relocations = @([pscustomobject]@{ Setting = 'PassiveTameIntervalMultiplier'; Reason = 'test relocation' })
+        }
+        $applyResult = Invoke-AsaAiApplyProposal -Proposal $applyProposal
+        Assert-True $applyResult.Success 'Relocation apply: succeeds against an isolated fixture'
+        Assert-True (Test-Path -LiteralPath $applyResult.BackupPath) 'Relocation apply: a backup snapshot directory was created'
+
+        $backupGU = Get-Content -LiteralPath (Join-Path $applyResult.BackupPath 'GameUserSettings.ini')
+        $backupGI = Get-Content -LiteralPath (Join-Path $applyResult.BackupPath 'Game.ini')
+        Assert-True ((Compare-Object $relocOriginalGU $backupGU -SyncWindow 0) -eq $null) 'Relocation apply: backup contains the PRE-CHANGE GameUserSettings.ini exactly'
+        Assert-True ((Compare-Object $relocOriginalGI $backupGI -SyncWindow 0) -eq $null) 'Relocation apply: backup contains the PRE-CHANGE Game.ini exactly'
+
+        $afterGU = Get-Content -LiteralPath $relocFixtureGU
+        $afterGI = Get-Content -LiteralPath $relocFixtureGI
+        Assert-True (($afterGU -join "`n") -notlike '*PassiveTameIntervalMultiplier*') 'Relocation apply: source setting was removed from GameUserSettings.ini'
+        Assert-True (($afterGU -join "`n") -like '*ServerHardcore=False*') 'Relocation apply: unrelated settings in the source file are untouched'
+        Assert-True (($afterGI -join "`n") -like '*PassiveTameIntervalMultiplier=0.2*') 'Relocation apply: destination setting was added to Game.ini with its value preserved'
+        Assert-True (($afterGI -join "`n") -like '*BabyMatureSpeedMultiplier=1.0*') 'Relocation apply: unrelated settings in the destination file are untouched'
+
+        # Post-write validation: re-run the deterministic planner against the
+        # NEW live state -- it must now report nothing left to relocate
+        # (source gone) and see the setting correctly at its destination.
+        $postWriteLines = @{ GU = [IO.File]::ReadAllLines($relocFixtureGU); GI = [IO.File]::ReadAllLines($relocFixtureGI) }
+        $postWritePlan = Get-AsaSettingRelocationPlan -SettingName 'PassiveTameIntervalMultiplier' -GameUserSettingsLines $postWriteLines.GU -GameIniLines $postWriteLines.GI
+        Assert-True (-not $postWritePlan.Success) 'Relocation apply: post-write validation confirms the source is gone (nothing left to relocate)'
+        $postWriteDiag = Invoke-AsaConfigDiagnostics -GameUserSettingsLines $postWriteLines.GU -GameIniLines $postWriteLines.GI
+        Assert-True ((@($postWriteDiag.Findings | Where-Object { $_.Key -eq 'PassiveTameIntervalMultiplier' -and $_.Category -eq 'WRONG TARGET FILE' })).Count -eq 0) 'Relocation apply: post-write diagnostics no longer flag the setting as WRONG TARGET FILE'
+
+        Assert-True (((Get-Content -LiteralPath $relocFixtureChangelog) -join "`n") -match 'PassiveTameIntervalMultiplier') 'Relocation apply: a changelog entry was recorded'
+
+        # --- 18b. Rollback restores BOTH files exactly on a forced mid-write failure ---
+        [IO.File]::WriteAllLines($relocFixtureGU, $relocOriginalGU)
+        [IO.File]::WriteAllLines($relocFixtureGI, $relocOriginalGI)
+        Remove-Item -LiteralPath $relocFixtureBackups -Recurse -Force -ErrorAction SilentlyContinue
+        Clear-Content -LiteralPath $relocFixtureChangelog -ErrorAction SilentlyContinue
+
+        # Force the SECOND write in the transaction (the Game.ini destination)
+        # to fail by simulating "the server started mid-write" on exactly that
+        # check -- this happens strictly after GameUserSettings.ini has
+        # already been fully replaced with its new content, so rollback must
+        # restore a file that really was changed, not a no-op.
+        $script:AsaRelocationMockCallCount = 0
+        $script:AsaRelocationMockTripAt = 5
+        function Get-Process {
+            param([string]$Name, $ErrorAction)
+            $script:AsaRelocationMockCallCount++
+            if ($Name -eq 'ArkAscendedServer' -and $script:AsaRelocationMockCallCount -eq $script:AsaRelocationMockTripAt) {
+                return [pscustomobject]@{ Id = 999999; ProcessName = 'ArkAscendedServer' }
+            }
+            return $null
+        }
+
+        try {
+            $rollbackResult = Invoke-AsaAiApplyProposal -Proposal $applyProposal
+            Assert-True (-not $rollbackResult.Success) 'Relocation rollback: a forced mid-write failure is reported as a failed apply'
+            Assert-True ($rollbackResult.Message -like '*restored*') 'Relocation rollback: the failure message confirms automatic restoration'
+
+            $rolledBackGU = Get-Content -LiteralPath $relocFixtureGU
+            $rolledBackGI = Get-Content -LiteralPath $relocFixtureGI
+            Assert-True ((Compare-Object $relocOriginalGU $rolledBackGU -SyncWindow 0) -eq $null) 'Relocation rollback: GameUserSettings.ini (the file that was actually changed) is restored exactly'
+            Assert-True ((Compare-Object $relocOriginalGI $rolledBackGI -SyncWindow 0) -eq $null) 'Relocation rollback: Game.ini is exactly its original content after rollback'
+        }
+        finally {
+            Remove-Item Function:\Get-Process -ErrorAction SilentlyContinue
+        }
+    }
+    finally {
+        $script:AsaAiTestConfigPathOverride = $null
+        Remove-Item -LiteralPath $relocFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 19. Natural-language diagnostic-context resolution -- deterministic, never
+#     delegated to the local model. Fixture-based (via the same path
+#     override), so this never depends on -- or drifts out of sync with --
+#     the live server's current configuration.
+# ---------------------------------------------------------------------------
+$diagContextFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('asa-diagcontext-test-' + [guid]::NewGuid().ToString('N'))
+[void](New-Item -ItemType Directory -Path $diagContextFixtureRoot -Force)
+$diagContextGU = Join-Path $diagContextFixtureRoot 'GameUserSettings.ini'
+$diagContextGI = Join-Path $diagContextFixtureRoot 'Game.ini'
+try {
+    # The exact three-finding scenario from the request, plus two settings
+    # that must NEVER be auto-included (one BLOCKED, one entirely unknown),
+    # plus a third that's simply not part of this diagnostic category.
+    [IO.File]::WriteAllLines($diagContextGU, @(
+        '[ServerSettings]'
+        'PassiveTameIntervalMultiplier=0.2'
+        'bAllowSpeedLeveling=True'
+        'SupplyCrateLootQualityMultiplier=2.0'
+        'MaxPlayers=10'
+        'NeedsPowerToActivateAquaticCompartments=True'
+    ))
+    [IO.File]::WriteAllLines($diagContextGI, @(
+        '[/Script/ShooterGame.ShooterGameMode]'
+        'ActiveMods=12345'
+    ))
+    $script:AsaAiTestConfigPathOverride = [pscustomobject]@{
+        GameUserSettings = $diagContextGU; GameIni = $diagContextGI
+        BackupRoot = (Join-Path $diagContextFixtureRoot 'backups'); ChangelogPath = (Join-Path $diagContextFixtureRoot 'CHANGELOG.md')
+    }
+
+    # Sanity: ActiveMods (BLOCKED) really does surface as WRONG TARGET FILE
+    # too, alongside its BLOCKED finding -- proving the exclusion below is
+    # real defense-in-depth, not just "the category never overlaps".
+    $diagContextDiag = Invoke-AsaConfigDiagnostics
+    Assert-True ((@($diagContextDiag.Findings | Where-Object { $_.Key -eq 'ActiveMods' -and $_.Category -eq 'WRONG TARGET FILE' })).Count -ge 1) 'Sanity: the BLOCKED fixture setting genuinely produces a WRONG TARGET FILE finding too'
+
+    foreach ($phrase in @(
+        'Fix the settings diagnostics found in the wrong file',
+        'Fix the WRONG TARGET FILE findings',
+        'Fix the settings diagnostics identified as WRONG TARGET FILE while preserving their current values. Do not change anything else.'
+    )) {
+        $nlProposal = Get-AsaAiProposal -Prompt $phrase
+        Assert-True (@($nlProposal.Relocations).Count -eq 3) "Diagnostic-context '$phrase': resolves to exactly 3 relocations"
+        $relocatedNames = @($nlProposal.Relocations | ForEach-Object { $_.Setting })
+        Assert-True ($relocatedNames -contains 'PassiveTameIntervalMultiplier') "Diagnostic-context '$phrase': includes PassiveTameIntervalMultiplier"
+        Assert-True ($relocatedNames -contains 'bAllowSpeedLeveling') "Diagnostic-context '$phrase': includes bAllowSpeedLeveling"
+        Assert-True ($relocatedNames -contains 'SupplyCrateLootQualityMultiplier') "Diagnostic-context '$phrase': includes SupplyCrateLootQualityMultiplier"
+        Assert-True ($relocatedNames -notcontains 'MaxPlayers') "Diagnostic-context '$phrase': never includes MaxPlayers (UNSUPPORTED/BLOCKED)"
+        Assert-True ($relocatedNames -notcontains 'NeedsPowerToActivateAquaticCompartments') "Diagnostic-context '$phrase': never includes an unknown/mod setting"
+        Assert-True ($relocatedNames -notcontains 'ActiveMods') "Diagnostic-context '$phrase': never includes a BLOCKED setting, even though it also has a WRONG TARGET FILE finding"
+        Assert-True (@($nlProposal.Changes).Count -eq 0 -and @($nlProposal.Actions).Count -eq 0 -and @($nlProposal.Recipes).Count -eq 0) "Diagnostic-context '$phrase': proposes nothing else (Do not change anything else)"
+    }
+
+    # A prompt that does not name a specific, safe category must NOT be
+    # deterministically resolved from diagnostics at all (falls through to
+    # the normal model path instead of guessing).
+    Assert-True ((Get-AsaAiReferencedDiagnosticCategories -Prompt 'Set XP to 5').Count -eq 0) 'Diagnostic-context: an unrelated request never triggers diagnostic-category resolution'
+    Assert-True ((Get-AsaAiReferencedDiagnosticCategories -Prompt 'Fix the diagnostics').Count -eq 0) 'Diagnostic-context: a vague "fix the diagnostics" request (no named safe category) is not guessed'
+}
+finally {
+    $script:AsaAiTestConfigPathOverride = $null
+    Remove-Item -LiteralPath $diagContextFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 Write-Host ''

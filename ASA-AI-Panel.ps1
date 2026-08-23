@@ -440,6 +440,18 @@ $askButton.Add_Click({
             [void]$item.SubItems.Add([string]$recipe.Reason)
             [void]$list.Items.Add($item)
         }
+        foreach ($relocation in @($result.Relocations)) {
+            $moveSummary = "$($relocation.FromTarget) $($relocation.FromSection) -> $($relocation.ToTarget) $($relocation.ToSection)"
+            $valueSummary = "value: $($relocation.SourceValues -join ', ')"
+            if ($relocation.DestinationHadExisting) {
+                $valueSummary += if ($relocation.WriteDestination) { ' (overwrites existing destination value)' } else { ' (destination already matched; duplicate source removed)' }
+            }
+            $item = New-Object Windows.Forms.ListViewItem('Relocate')
+            [void]$item.SubItems.Add([string]$relocation.Setting)
+            [void]$item.SubItems.Add($moveSummary + ' | ' + $valueSummary)
+            [void]$item.SubItems.Add([string]$relocation.Reason)
+            [void]$list.Items.Add($item)
+        }
 
         if (@($result.Rejected).Count -gt 0) {
             $summaryBox.Text += "`r`nRejected: " + (@($result.Rejected) -join '; ')
@@ -454,7 +466,7 @@ $askButton.Add_Click({
         $stepCount = @($result.Steps).Count
         $failedCount = @(@($result.Steps) | Where-Object { -not $_.Success }).Count
 
-        if ($stepCount -eq 0 -and @($result.Changes).Count -eq 0 -and @($result.Actions).Count -eq 0 -and @($result.Recipes).Count -eq 0) {
+        if ($stepCount -eq 0 -and @($result.Changes).Count -eq 0 -and @($result.Actions).Count -eq 0 -and @($result.Recipes).Count -eq 0 -and @($result.Relocations).Count -eq 0) {
             $status.Text = 'Nothing to do - no allowed changes or actions were proposed'
             $status.ForeColor = $Amber
         }

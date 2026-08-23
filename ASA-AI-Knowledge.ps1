@@ -836,6 +836,167 @@ function Invoke-AsaConfigDiagnostics {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Setting relocation planning -- deterministic, read-only. Decides whether an
+# existing, known-supported setting can safely be moved from an incorrect
+# INI file/section to its authoritative location. Never writes anything;
+# never lets a caller supply the destination -- it is always re-derived from
+# the knowledge base here. Used by both the "Run request" write pipeline
+# (ASA-AI-Assistant.ps1) and the diagnostics-context resolver, so a
+# relocation is validated identically no matter how it was requested.
+# ---------------------------------------------------------------------------
+
+function Get-AsaSettingRelocationPlan {
+    <#
+    Given a setting name and the CURRENT contents of both INI files, decides
+    whether relocating that setting from wherever it currently, incorrectly
+    lives to its authoritative knowledge-base target/section is safe -- and if
+    so, exactly what to move. The destination always comes from the
+    authoritative catalog entry (Entry.target / Entry.section); nothing here
+    is ever influenced by a generative model's guess. A destination conflict
+    (existing value differs) is refused unless -Resolution explicitly says
+    how to resolve it -- never silently overwritten.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$SettingName,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$GameUserSettingsLines,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$GameIniLines,
+        [ValidateSet('use_source', 'keep_destination')]
+        [string]$Resolution
+    )
+
+    $baseName = Get-AsaSettingBaseName -Key $SettingName
+    $catalog = @(Find-AsaSettingExact -Name $baseName)
+    if ($catalog.Count -eq 0) {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' is not in the authoritative ASA knowledge base (unknown, mod, or custom setting) -- relocation refused." }
+    }
+
+    $best = $catalog[0]
+    $tags = Get-AsaSettingStatusTags -Entry $best
+    if ($tags -notcontains 'SUPPORTED') {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' is tagged $($tags -join ', ') in the knowledge base -- only a SUPPORTED setting may be relocated automatically." }
+    }
+    if ($best.target -notin @('GameUserSettings.ini', 'Game.ini')) {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' is documented as a $($best.target) setting, not an INI setting -- there is no INI location to relocate it to." }
+    }
+
+    $toTarget = [string]$best.target
+    $toSection = [string]$best.section
+    $isRepeatable = ($best.value_type -eq 'array') -or ([string]$best.description -match $script:AsaKnowledgeRepeatableHintPattern)
+
+    $guEntries = @(ConvertFrom-AsaIniLines -Lines $GameUserSettingsLines -TargetFile 'GameUserSettings.ini')
+    $giEntries = @(ConvertFrom-AsaIniLines -Lines $GameIniLines -TargetFile 'Game.ini')
+    $allEntries = @($guEntries) + @($giEntries)
+
+    $matching = @($allEntries | Where-Object { (Get-AsaSettingBaseName -Key $_.Key) -ieq $baseName })
+    $atDestination = @($matching | Where-Object { $_.TargetFile -ceq $toTarget -and $_.Section.Trim() -ieq $toSection.Trim() })
+    $elsewhere = @($matching | Where-Object { -not ($_.TargetFile -ceq $toTarget -and $_.Section.Trim() -ieq $toSection.Trim()) })
+
+    if ($elsewhere.Count -eq 0) {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' was not found in an incorrect location -- nothing to relocate (it may already be correctly located, or not configured at all)." }
+    }
+
+    $sourceGroups = @($elsewhere | Group-Object -Property { $_.TargetFile + '|' + $_.Section })
+    if ($sourceGroups.Count -gt 1) {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' appears in more than one incorrect location -- relocation refused rather than guessing which one to move." }
+    }
+    $source = $sourceGroups[0].Group
+    $fromTarget = $source[0].TargetFile
+    $fromSection = $source[0].Section
+
+    if (-not $isRepeatable -and $source.Count -gt 1) {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' is not documented as repeatable but appears $($source.Count) times at the source location -- relocation refused (resolve the duplicate first)." }
+    }
+    if (-not $isRepeatable -and $source[0].Key.Trim() -cne $baseName) {
+        return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$($source[0].Key)' is an indexed/subscripted setting -- automatic relocation is not supported for these yet." }
+    }
+
+    foreach ($entry in $source) {
+        if ($isRepeatable) {
+            $syntaxIssues = @(Test-AsaComplexSettingSyntax -Entry $best -Value $entry.Value)
+            if ($syntaxIssues.Count -gt 0) {
+                return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' at the source location fails validation and cannot be relocated: $($syntaxIssues[0])" }
+            }
+        }
+        else {
+            $typeIssue = Test-AsaScalarValueType -ValueType $best.value_type -Value $entry.Value
+            if ($typeIssue) { return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' at the source location fails validation and cannot be relocated: $typeIssue" } }
+            $rangeIssue = Test-AsaValueRange -Entry $best -Value $entry.Value
+            if ($rangeIssue) { return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' at the source location fails validation and cannot be relocated: $rangeIssue" } }
+            $enumIssue = Test-AsaValueEnum -Entry $best -Value $entry.Value
+            if ($enumIssue) { return [pscustomobject]@{ Success = $false; Setting = $baseName; Conflict = $false; Error = "'$baseName' at the source location fails validation and cannot be relocated: $enumIssue" } }
+        }
+    }
+
+    $sourceLines = @($source | ForEach-Object { "$($_.Key)=$($_.Value)" })
+    $sourceValues = @($source | ForEach-Object { $_.Value.Trim() })
+
+    $writeDestination = $true
+    $destinationLines = $sourceLines
+
+    if ($atDestination.Count -gt 0) {
+        if ($isRepeatable) {
+            if ($Resolution -eq 'keep_destination') {
+                $writeDestination = $false
+            }
+            elseif ($Resolution -eq 'use_source') {
+                $writeDestination = $true
+                $destinationLines = $sourceLines
+            }
+            else {
+                return [pscustomobject]@{
+                    Success = $false; Setting = $baseName; Conflict = $true
+                    Error   = "'$baseName' already has $($atDestination.Count) entr$(if ($atDestination.Count -eq 1) { 'y' } else { 'ies' }) at the destination -- relocating a repeatable setting onto an existing destination requires an explicit resolution ('use_source' or 'keep_destination') and was refused to avoid silently merging or overwriting."
+                }
+            }
+        }
+        else {
+            $destValue = $atDestination[0].Value.Trim()
+            $sourceValue = $sourceValues[0]
+            if (Test-AsaDependencyValueMatches -Effective $destValue -Required $sourceValue) {
+                # Same value already at the destination -- unambiguous: remove
+                # the source duplicate, leave the destination untouched.
+                $writeDestination = $false
+            }
+            elseif ($Resolution -eq 'use_source') {
+                $writeDestination = $true
+                $destinationLines = $sourceLines
+            }
+            elseif ($Resolution -eq 'keep_destination') {
+                $writeDestination = $false
+            }
+            else {
+                return [pscustomobject]@{
+                    Success          = $false
+                    Setting          = $baseName
+                    Conflict         = $true
+                    DestinationValue = $destValue
+                    SourceValue      = $sourceValue
+                    Error            = "Destination already has $baseName=$destValue, which differs from the source value $sourceValue. An explicit resolution ('use_source' or 'keep_destination') is required before this relocation can proceed."
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Success                = $true
+        Setting                = $baseName
+        Conflict               = $false
+        FromTarget             = $fromTarget
+        FromSection            = $fromSection
+        ToTarget               = $toTarget
+        ToSection              = $toSection
+        Repeatable             = $isRepeatable
+        SourceLines            = $sourceLines
+        SourceValues           = $sourceValues
+        WriteDestination       = $writeDestination
+        DestinationLines       = $destinationLines
+        DestinationHadExisting = $atDestination.Count -gt 0
+        Reason                 = "Authoritative ASA knowledge base specifies $toTarget $toSection as the correct target."
+        Error                  = ''
+    }
+}
+
 # Categories shown by default in the "Analyze ASA configuration" UI. Anything
 # not listed here (currently just IGNORED_NON_SERVER) is still fully present
 # in Findings/ByCategory for anyone who wants the raw detail -- it is only
