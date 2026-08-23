@@ -8,6 +8,7 @@ backups/
 config-snapshots/
 test-results/
 .image-review/
+usage-audit/
 
 # Server/game binaries and SteamCMD
 server/

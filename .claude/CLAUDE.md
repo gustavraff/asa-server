@@ -70,3 +70,12 @@ Every AI-driven change — rate settings, actions, recipe overrides, relocations
 11. Commit completed work (only the files relevant to the task — see Git expectations above).
 12. When switching to a substantially different task, prefer a fresh Claude Code session instead of carrying a large conversation context.
 13. Use `/compact` during a long single task if context becomes large.
+
+## USAGE AUDIT AND OVERUSE CONTROL
+- `AI-Usage-Audit.ps1 -ShowWindow` records a local post-task audit. The user may enter official before/after credit values; never estimate an exact credit charge and present it as measured.
+- Before a substantial task, provide a LOW/MEDIUM/HIGH preflight usage-risk estimate based on the planned files, tool calls, scans, research, and tests. `AI-Usage-Audit.ps1 -Preflight` provides the shared deterministic rating. If risk is HIGH, reduce the plan or ask Gustav before proceeding. This is a relative warning, never an exact credit prediction.
+- The audit is local efficiency evidence, not OpenAI/Anthropic billing data. It cannot refund, restore, or reimburse credits.
+- Reuse already verified evidence unless a new change could invalidate it. Do not rerun map changes, full scans, server restarts, or full test suites merely to prove unrelated functionality again.
+- For narrow changes, test the changed feature and its directly affected paths. For shared infrastructure, run the full suite once before commit.
+- If a task uses more than 25 tool calls, repeats the same scan/test/action more than once, performs a full repository scan, or runs the full suite more than once, explicitly review whether that work was necessary and state a concrete optimization in the final handoff.
+- For a substantial task, offer to record the audit after completion. Official before/after usage values must come from the user's Usage Dashboard.
