@@ -46,13 +46,26 @@ try {
     Start-Sleep -Milliseconds 600
     $jobJson = & curl.exe -u "gustav:$password" -s "$baseUrl/api/actions"
     $job = $jobJson | ConvertFrom-Json
-    Write-Output "anonymous=$anonymous status=$valid invalidStatus=$invalid page=$page anonymousAction=$anonymousAction unknownAction=$unknownAction acceptedAction=$acceptedAction job=$($job.state)"
-    if ($anonymous -ne '401' -or $valid -ne '200' -or $invalid -ne '200' -or $page -ne '200' -or $anonymousAction -ne '401' -or $unknownAction -ne '404' -or $acceptedAction -ne '202' -or $job.state -ne 'success') {
+    $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("gustav:$password"))
+    $headers = @{ Authorization = "Basic $basic" }
+    $current = Invoke-RestMethod -Uri "$baseUrl/api/config" -Headers $headers
+    $important = [ordered]@{
+        serverPVE = [bool]$current.important.serverPVE; allowFlyerCarryPvE = [bool]$current.important.allowFlyerCarryPvE
+        alwaysAllowStructurePickup = [bool]$current.important.alwaysAllowStructurePickup; autosaveMinutes = [int]$current.important.autosaveMinutes
+        maxTamedDinos = [int]$current.important.maxTamedDinos; noRespawnPenalty = [bool]$current.important.noRespawnPenalty
+        simpleBedCooldown = [int]$current.important.simpleBedCooldown; modernBedCooldown = [int]$current.important.modernBedCooldown
+        joinPassword = @{ mode = 'keep'; value = '' }; adminPassword = @{ mode = 'keep'; value = '' }
+    }
+    $proposal = [ordered]@{ rates = $current.rates; mods = @($current.mods); progression = $current.progression; allowSpeedLeveling = -not [bool]$current.allowSpeedLeveling; wild = $current.wild; levelDistribution = [string]$current.levelDistribution; important = $important; admins = @($current.admins) }
+    $previewResult = Invoke-RestMethod -Method Post -Uri "$baseUrl/api/config/preview" -Headers $headers -ContentType 'application/json' -Body ($proposal | ConvertTo-Json -Depth 8 -Compress)
+    $applyResult = Invoke-RestMethod -Method Post -Uri "$baseUrl/api/config/apply" -Headers $headers -ContentType 'application/json' -Body (@{ token = $previewResult.token } | ConvertTo-Json -Compress)
+    Write-Output "anonymous=$anonymous status=$valid invalidStatus=$invalid page=$page anonymousAction=$anonymousAction unknownAction=$unknownAction acceptedAction=$acceptedAction job=$($job.state) previewChanges=$($previewResult.changes.Count) apply=$($applyResult.snapshot)"
+    if ($anonymous -ne '401' -or $valid -ne '200' -or $invalid -ne '200' -or $page -ne '200' -or $anonymousAction -ne '401' -or $unknownAction -ne '404' -or $acceptedAction -ne '202' -or $job.state -ne 'success' -or $previewResult.changes.Count -lt 1 -or $applyResult.snapshot -ne 'test-mode') {
         Write-Output "service stdout: $(Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue)"
         Write-Output "service stderr: $(Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)"
         throw 'Targeted authentication test failed.'
     }
-    Write-Output 'PASS: authenticated control service protected the dashboard/actions and completed a simulated allowlisted action without touching ASA.'
+    Write-Output 'PASS: authenticated control service protected dashboard/actions and completed simulated action plus full config preview/apply without touching ASA.'
 }
 finally {
     if ($service -and -not $service.HasExited) { Stop-Process -Id $service.Id -Force -ErrorAction SilentlyContinue }

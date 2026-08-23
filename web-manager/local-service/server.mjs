@@ -163,21 +163,34 @@ createServer(async (request, response) => {
     if (request.url === '/api/config/preview' && request.method === 'POST') {
       if (!authenticated(request)) return challenge(request, response);
       if (!sameOrigin(request)) return send(response, 403, 'application/json', JSON.stringify({ error: 'Request origin rejected.' }));
-      const validated = validateManagerConfig(await readJson(request));
+      let validated;
+      try { validated = validateManagerConfig(await readJson(request)); }
+      catch (error) { return send(response,400,'application/json; charset=utf-8',JSON.stringify({ error:error instanceof Error ? error.message : 'Invalid configuration.' })); }
       const current = await loadManagerConfig(projectRoot);
-      const changedRates = Object.entries(validated.rates).filter(([key,value]) => Number(current.rates[key]) !== value).map(([key,value]) => ({ key, from:current.rates[key], to:value }));
-      const modsChanged = current.mods.join(',') !== validated.mods.join(',');
+      const changes = [];
+      for (const group of ['rates','progression','wild']) for (const [key,value] of Object.entries(validated[group])) if (Number(current[group][key]) !== value) changes.push({ group, key, from:current[group][key], to:value });
+      if (current.mods.join(',') !== validated.mods.join(',')) changes.push({ group:'mods',key:'MODS',from:`${current.mods.length} entries`,to:`${validated.mods.length} entries` });
+      if (current.allowSpeedLeveling !== validated.allowSpeedLeveling) changes.push({group:'progression',key:'ALLOW_SPEED_LEVELING',from:current.allowSpeedLeveling,to:validated.allowSpeedLeveling});
+      if (current.levelDistribution !== validated.levelDistribution) changes.push({group:'wild',key:'Level distribution',from:current.levelDistribution,to:validated.levelDistribution});
+      for (const key of ['serverPVE','allowFlyerCarryPvE','alwaysAllowStructurePickup','autosaveMinutes','maxTamedDinos','noRespawnPenalty','simpleBedCooldown','modernBedCooldown']) if (current.important[key] !== validated.important[key]) changes.push({group:'important',key,from:current.important[key],to:validated.important[key]});
+      if (validated.important.joinPassword.mode !== 'keep') changes.push({group:'important',key:'Join password',from:current.important.joinPasswordConfigured?'configured':'blank',to:validated.important.joinPassword.mode==='clear'?'blank':'new value'});
+      if (validated.important.adminPassword.mode !== 'keep') changes.push({group:'important',key:'Admin password',from:current.important.adminPasswordConfigured?'configured':'missing',to:'new value'});
+      if (current.admins.join(',') !== validated.admins.join(',')) changes.push({group:'admins',key:'Permanent admins',from:`${current.admins.length} entries`,to:`${validated.admins.length} entries`});
       const token = randomBytes(20).toString('hex');
       previews.set(token,{ validated, expires:Date.now()+300000 });
-      return send(response,200,'application/json; charset=utf-8',JSON.stringify({ token, changedRates, modsChanged, fromMods:current.mods, toMods:validated.mods, restartRequired:true }));
+      return send(response,200,'application/json; charset=utf-8',JSON.stringify({ token, changes, restartRequired:true }));
     }
     if (request.url === '/api/config/apply' && request.method === 'POST') {
       if (!authenticated(request)) return challenge(request, response);
       if (!sameOrigin(request)) return send(response, 403, 'application/json', JSON.stringify({ error: 'Request origin rejected.' }));
       const { token } = await readJson(request);
       const preview = previews.get(String(token));
-      previews.delete(String(token));
       if (!preview || preview.expires < Date.now()) return send(response,409,'application/json',JSON.stringify({ error:'Preview expired. Preview the changes again.' }));
+      if (!testMode) {
+        const liveStatus = JSON.parse(await getStatus());
+        if (liveStatus.server?.running) return send(response,409,'application/json',JSON.stringify({ error:'Stop the ASA server safely before applying configuration changes. Your preview remains valid for five minutes.' }));
+      }
+      previews.delete(String(token));
       const result = testMode ? { snapshot:'test-mode',restartRequired:true } : await applyManagerConfig(projectRoot,preview.validated);
       return send(response,200,'application/json; charset=utf-8',JSON.stringify({ ...result, message:'Settings saved with a backup. Restart ASA when you want them active.' }));
     }
