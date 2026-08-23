@@ -3,8 +3,19 @@ param(
     [switch]$LatestReport,
     [switch]$Preflight,
     [switch]$CreateHandoff,
+    [switch]$Record,
     [string]$CurrentTask = '',
     [string]$NextStep = '',
+    [string]$AuditAgent = 'Codex',
+    [string]$AuditTask = '',
+    [string]$AuditOutcome = '',
+    [int]$ActualToolCalls = 0,
+    [int]$ActualRepeatedActions = 0,
+    [int]$ActualFullScans = 0,
+    [int]$ActualFullTestSuites = 0,
+    [decimal]$OfficialCreditsBefore = -1,
+    [decimal]$OfficialCreditsAfter = -1,
+    [decimal]$AuditReviewLimit = 100,
     [int]$PlannedToolCalls = 0,
     [int]$PlannedRepeatedActions = 0,
     [int]$PlannedFullScans = 0,
@@ -172,8 +183,33 @@ if ($CreateHandoff) {
     exit 0
 }
 
+if ($Record) {
+    if ([string]::IsNullOrWhiteSpace($AuditTask)) { throw 'AuditTask is required with -Record.' }
+    $creditsSpent = $null
+    if ($OfficialCreditsBefore -ge 0 -and $OfficialCreditsAfter -ge 0) {
+        $creditsSpent = [math]::Max(0, $OfficialCreditsBefore - $OfficialCreditsAfter)
+    }
+    $entry = [pscustomobject]@{
+        Timestamp = (Get-Date).ToString('o')
+        Agent = $AuditAgent
+        Task = $AuditTask
+        CreditsBefore = if ($OfficialCreditsBefore -ge 0) { $OfficialCreditsBefore } else { $null }
+        CreditsAfter = if ($OfficialCreditsAfter -ge 0) { $OfficialCreditsAfter } else { $null }
+        CreditsSpent = $creditsSpent
+        ReviewLimit = $AuditReviewLimit
+        ToolCalls = $ActualToolCalls
+        RepeatedActions = $ActualRepeatedActions
+        FullScans = $ActualFullScans
+        FullTestSuites = $ActualFullTestSuites
+        Outcome = $AuditOutcome
+    }
+    Save-AuditEntry $entry
+    Write-Output (Format-AuditReport $entry)
+    exit 0
+}
+
 if (-not $ShowWindow) {
-    Write-Output 'Run with -ShowWindow, -LatestReport, -CreateHandoff, or -Preflight plus planned activity counts.'
+    Write-Output 'Run with -ShowWindow, -LatestReport, -CreateHandoff, -Record, or -Preflight plus planned activity counts.'
     exit 0
 }
 
