@@ -322,10 +322,17 @@ $diagnosticsButton.Add_Click({
 
     try {
         $result = Invoke-AsaConfigDiagnostics
-        $categoryCounts = $result.ByCategory.Keys | ForEach-Object { "$($_): $($result.ByCategory[$_].Count)" }
-        $summaryBox.Text = "Read-only configuration health check -- $($result.TotalFindings) finding(s). " + ($categoryCounts -join '; ')
+        $displayFindings = @(Get-AsaConfigDiagnosticsDisplayFindings -Diagnostics $result)
 
-        foreach ($finding in @($result.Findings)) {
+        $summaryLine = "Read-only configuration health check -- $($result.ProblemFindingsCount) configuration problem(s)"
+        if ($result.InformationalFindingsCount -gt 0) { $summaryLine += ", $($result.InformationalFindingsCount) informational note(s)" }
+        $summaryLine += '.'
+        if ($result.IgnoredNonServerCount -gt 0) {
+            $summaryLine += " $($result.IgnoredNonServerCount) non-server/config bookkeeping entries ignored (Unreal Engine/client/session state, e.g. audio/video/UI settings -- not dedicated-server configuration)."
+        }
+        $summaryBox.Text = $summaryLine
+
+        foreach ($finding in $displayFindings) {
             $item = New-Object Windows.Forms.ListViewItem([string]$finding.Category)
             [void]$item.SubItems.Add([string]$finding.Key)
             [void]$item.SubItems.Add([string]$finding.Value)
@@ -333,9 +340,9 @@ $diagnosticsButton.Add_Click({
             [void]$list.Items.Add($item)
         }
 
-        $logBox.Text = 'Read-only: no setting was changed. To fix something found here, describe the change above and use Run request -- it still goes through the normal allow-list, preview, backup, and rollback pipeline.'
-        $status.Text = if ($result.TotalFindings -eq 0) { 'No issues found' } else { "$($result.TotalFindings) finding(s) -- see list below" }
-        $status.ForeColor = if ($result.TotalFindings -eq 0) { $Green } else { $Amber }
+        $logBox.Text = "Read-only: no setting was changed. Showing $($displayFindings.Count) of $($result.TotalFindings) total finding(s); $($result.IgnoredNonServerCount) non-server bookkeeping entries are hidden from this view but still counted above. To fix something found here, describe the change above and use Run request -- it still goes through the normal allow-list, preview, backup, and rollback pipeline."
+        $status.Text = if ($result.ProblemFindingsCount -eq 0) { 'No configuration problems found' } else { "$($result.ProblemFindingsCount) configuration problem(s) -- see list below" }
+        $status.ForeColor = if ($result.ProblemFindingsCount -eq 0) { $Green } else { $Amber }
     }
     catch {
         $status.Text = 'Analysis failed'

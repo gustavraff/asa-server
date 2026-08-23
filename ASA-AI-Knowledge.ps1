@@ -484,6 +484,44 @@ function Get-AsaObsoleteReplacementHint {
     return $null
 }
 
+# Fixed Unreal Engine section names that are always client/display bookkeeping,
+# independent of ASA or any specific game -- a documented engine convention,
+# not project data. Evidence: observed verbatim in this server's own
+# GameUserSettings.ini (ScalabilityGroups = sg.* render-quality group values;
+# Startup = DLSS/FSR/FrameGeneration/Reflex upscaling toggles), neither of
+# which has any dedicated-server meaning (a headless server has no renderer).
+$script:AsaKnownEngineNonServerSections = @('[ScalabilityGroups]', '[Startup]')
+
+function Test-AsaIsIgnoredNonServerEntry {
+    <#
+    Conservative, structural classifier for INI entries that are Unreal
+    Engine / client / session bookkeeping rather than dedicated-server
+    configuration -- e.g. LastJoinedSessionPerCategory, MasterAudioVolume,
+    sg.ResolutionQuality. Never based on a single literal key name: only on
+    (a) a fixed, documented UE engine section, (b) the UE naming convention
+    for its per-client "GameUserSettings" class (as opposed to the
+    server-authoritative GameMode/ServerSettings classes), or (c) the UE
+    "sg." scalability-group key prefix convention. Anything that doesn't
+    match one of these stays classified as a possible server setting, even
+    if it isn't in the catalog -- e.g. mod-added sections like
+    [CustomLevelDistrib] or [CybersStructures] are deliberately NOT ignored,
+    since mod config commonly is server-relevant.
+    #>
+    param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key)
+
+    $normalizedSection = $Section.Trim()
+    if ($script:AsaKnownEngineNonServerSections -icontains $normalizedSection) { return $true }
+
+    # e.g. "[/Script/ShooterGame.ShooterGameUserSettings]" or
+    # "[/Script/Engine.GameUserSettings]" -- UE's per-user settings object,
+    # distinct from "[/Script/ShooterGame.ShooterGameMode]" / "[ServerSettings]".
+    if ($normalizedSection -match '\.\w*GameUserSettings\w*\]$') { return $true }
+
+    if ($Key.Trim() -match '^sg\.') { return $true }
+
+    return $false
+}
+
 function New-AsaDiagnosticFinding {
     param([string]$Category, [string]$File, [string]$Section, [string]$Key, [string]$Value, [int]$Line, [string]$Message)
     [pscustomobject]@{ Category = $Category; File = $File; Section = $Section; Key = $Key; Value = $Value; Line = $Line; Message = $Message }
@@ -549,6 +587,12 @@ function Invoke-AsaConfigDiagnostics {
     foreach ($group in $groups) {
         if ($group.Count -le 1) { continue }
         $sample = $group.Group[0]
+
+        if (Test-AsaIsIgnoredNonServerEntry -Section $sample.Section -Key $sample.Key) {
+            [void]$findings.Add((New-AsaDiagnosticFinding -Category 'IGNORED_NON_SERVER' -File $sample.TargetFile -Section $sample.Section -Key $sample.Key -Value '' -Line $sample.LineNumber -Message "Appears $($group.Count) times, but this is Unreal Engine / client bookkeeping, not a dedicated-server setting -- not a configuration problem."))
+            continue
+        }
+
         $baseName = Get-AsaSettingBaseName -Key $sample.Key
         $catalogEntries = Find-AsaSettingExact -Name $baseName
         $isRepeatable = (@($catalogEntries | Where-Object { $_.value_type -eq 'array' })).Count -gt 0 -or
@@ -564,13 +608,18 @@ function Invoke-AsaConfigDiagnostics {
     }
 
     foreach ($item in $parsed) {
+        if (Test-AsaIsIgnoredNonServerEntry -Section $item.Section -Key $item.Key) {
+            [void]$findings.Add((New-AsaDiagnosticFinding -Category 'IGNORED_NON_SERVER' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $item.Value.Trim() -Line $item.LineNumber -Message 'Unreal Engine / client / session bookkeeping (e.g. audio, video, UI, or session-history state), not a dedicated-server configuration setting.'))
+            continue
+        }
+
         $baseName = Get-AsaSettingBaseName -Key $item.Key
         $candidates = Find-AsaSettingExact -Name $baseName
         $isSensitiveHit = (@($candidates | Where-Object { Get-AsaSettingIsSensitive -Entry $_ })).Count -gt 0
         $displayValue = if ($isSensitiveHit) { '[REDACTED]' } else { $item.Value.Trim() }
 
         if ($candidates.Count -eq 0) {
-            [void]$findings.Add((New-AsaDiagnosticFinding -Category 'UNKNOWN' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message 'No entry for this setting exists in the local ASA knowledge base (checked all categories, including archive/blocked). It may be a mod-added key, a typo, or genuinely undocumented.'))
+            [void]$findings.Add((New-AsaDiagnosticFinding -Category 'UNKNOWN_SERVER_SETTING' -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message 'No entry for this setting exists in the local ASA knowledge base (checked all categories, including archive/blocked). It may be a mod-added key, a typo, or a real server setting missing from the curated package.'))
             continue
         }
 
@@ -639,10 +688,41 @@ function Invoke-AsaConfigDiagnostics {
         $categorized[$f.Category].Add($f)
     }
 
+    $ignoredCount = (@($findings | Where-Object { $_.Category -eq 'IGNORED_NON_SERVER' })).Count
+    $informationalCount = (@($findings | Where-Object { $_.Category -eq 'INFORMATION' })).Count
+    $problemCount = $findings.Count - $ignoredCount - $informationalCount
+
     return [pscustomobject]@{
-        GeneratedAtUtc = [DateTime]::UtcNow.ToString('o')
-        TotalFindings  = $findings.Count
-        Findings       = $findings.ToArray()
-        ByCategory     = $categorized
+        GeneratedAtUtc             = [DateTime]::UtcNow.ToString('o')
+        TotalFindings              = $findings.Count
+        Findings                   = $findings.ToArray()
+        ByCategory                 = $categorized
+        # Actual configuration problems the user should look at (everything
+        # except INFORMATION and IGNORED_NON_SERVER).
+        ProblemFindingsCount       = $problemCount
+        InformationalFindingsCount = $informationalCount
+        IgnoredNonServerCount      = $ignoredCount
     }
+}
+
+# Categories shown by default in the "Analyze ASA configuration" UI. Anything
+# not listed here (currently just IGNORED_NON_SERVER) is still fully present
+# in Findings/ByCategory for anyone who wants the raw detail -- it is only
+# hidden from the default view, never deleted or recomputed away.
+$script:AsaDiagnosticsDefaultVisibleCategories = @(
+    'ERRORS', 'WRONG TARGET FILE', 'WRONG SECTION', 'DEPENDENCY ISSUES', 'CONFLICTS',
+    'DUPLICATES', 'UNSUPPORTED', 'OBSOLETE', 'UNVERIFIED', 'BLOCKED',
+    'SUSPICIOUS VALUES', 'UNKNOWN_SERVER_SETTING', 'INFORMATION', 'NO EFFECT'
+)
+
+function Get-AsaConfigDiagnosticsDisplayFindings {
+    <#
+    Read-only presentation filter for Invoke-AsaConfigDiagnostics's result:
+    returns only the findings worth showing a human by default (drops
+    IGNORED_NON_SERVER bookkeeping noise). The full, unfiltered result is
+    still available on the Diagnostics object this was built from -- nothing
+    is deleted, this just picks what a UI renders first.
+    #>
+    param([Parameter(Mandatory)]$Diagnostics)
+    return @($Diagnostics.Findings | Where-Object { $script:AsaDiagnosticsDefaultVisibleCategories -contains $_.Category })
 }

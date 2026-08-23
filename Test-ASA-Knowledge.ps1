@@ -109,6 +109,17 @@ $syntheticGameUserSettings = @(
     ''
     '[/Script/Engine.GameSession]'
     'MaxPlayers=70'
+    ''
+    '[/Script/ShooterGame.ShooterGameUserSettings]'
+    'LastJoinedSessionPerCategory=1'
+    'LastJoinedSessionPerCategory=2'
+    'MasterAudioVolume=1.0'
+    ''
+    '[ScalabilityGroups]'
+    'sg.ResolutionQuality=100'
+    ''
+    '[SomeModSection]'
+    'SomeModOnlySetting=42'
 )
 $syntheticGameIni = @(
     '[/Script/ShooterGame.ShooterGameMode]'
@@ -125,13 +136,56 @@ Assert-True ((Get-FindingsFor $diag 'BabyMatureSpeedMultiplier' 'WRONG TARGET FI
 Assert-True ((Get-FindingsFor $diag 'ServerHardcore' 'ERRORS').Count -ge 1) 'Diagnostics: invalid boolean detected'
 Assert-True ((Get-FindingsFor $diag 'HarvestAmountMultiplier' 'ERRORS').Count -ge 1) 'Diagnostics: invalid float detected'
 Assert-True ((Get-FindingsFor $diag 'ActiveMods' 'BLOCKED').Count -ge 1) 'Diagnostics: blocked setting flagged'
-Assert-True ((Get-FindingsFor $diag 'NotARealSettingXyz' 'UNKNOWN').Count -ge 1) 'Diagnostics: unknown setting flagged'
+Assert-True ((Get-FindingsFor $diag 'NotARealSettingXyz' 'UNKNOWN_SERVER_SETTING').Count -ge 1) 'Diagnostics: unknown server-like setting flagged as UNKNOWN_SERVER_SETTING'
 Assert-True ((Get-FindingsFor $diag 'XPMultiplier' 'WRONG SECTION').Count -ge 1) 'Diagnostics: wrong section detected'
 Assert-True ((Get-FindingsFor $diag 'MaxPlayers' 'UNSUPPORTED').Count -ge 1) 'Diagnostics: unsupported setting flagged'
 Assert-True ((Get-FindingsFor $diag 'FishingLootQualityMultiplier' 'ERRORS').Count -ge 1) 'Diagnostics: out-of-range value detected'
 Assert-True ((Get-FindingsFor $diag 'PerLevelStatsMultiplier_Player[8]' 'ERRORS').Count -ge 1) 'Diagnostics: malformed PerLevelStatsMultiplier value detected'
 Assert-True ((Get-FindingsFor $diag 'LevelExperienceRampOverrides' 'ERRORS').Count -ge 1) 'Diagnostics: malformed LevelExperienceRampOverrides (unbalanced parens) detected'
 Assert-True ((Get-FindingsFor $diag 'ConfigOverrideItemCraftingCosts' 'ERRORS').Count -ge 1) 'Diagnostics: malformed ConfigOverrideItemCraftingCosts detected'
+
+# ---------------------------------------------------------------------------
+# 7b. UNKNOWN_SERVER_SETTING vs IGNORED_NON_SERVER classification
+# ---------------------------------------------------------------------------
+
+# Direct unit tests of the structural classifier.
+Assert-True (Test-AsaIsIgnoredNonServerEntry -Section '[/Script/ShooterGame.ShooterGameUserSettings]' -Key 'LastJoinedSessionPerCategory') 'Classifier: UE per-client GameUserSettings-class section is ignored-non-server'
+Assert-True (Test-AsaIsIgnoredNonServerEntry -Section '[ScalabilityGroups]' -Key 'sg.ResolutionQuality') 'Classifier: fixed engine ScalabilityGroups section is ignored-non-server'
+Assert-True (Test-AsaIsIgnoredNonServerEntry -Section '[ServerSettings]' -Key 'sg.Anything') 'Classifier: sg.-prefixed key is ignored-non-server regardless of section'
+Assert-True (-not (Test-AsaIsIgnoredNonServerEntry -Section '[ServerSettings]' -Key 'TamingSpeedMultiplier')) 'Classifier: a real server section/key is NOT ignored'
+Assert-True (-not (Test-AsaIsIgnoredNonServerEntry -Section '[CustomLevelDistrib]' -Key 'WantsEqualLevels')) 'Classifier: a known mod-but-server-relevant section is NOT ignored'
+Assert-True (-not (Test-AsaIsIgnoredNonServerEntry -Section '[SomeModSection]' -Key 'SomeModOnlySetting')) 'Classifier: an unrecognized (possibly mod) section defaults to NOT ignored'
+
+# LastJoinedSessionPerCategory (this ticket's motivating example) must never
+# surface as a server configuration problem, in any category.
+$leakedAsProblem = @($diag.Findings | Where-Object { $_.Key -eq 'LastJoinedSessionPerCategory' -and $script:AsaDiagnosticsDefaultVisibleCategories -contains $_.Category })
+Assert-True ($leakedAsProblem.Count -eq 0) 'LastJoinedSessionPerCategory never appears as a server configuration problem'
+Assert-True ((Get-FindingsFor $diag 'LastJoinedSessionPerCategory' 'IGNORED_NON_SERVER').Count -ge 1) 'LastJoinedSessionPerCategory is classified IGNORED_NON_SERVER, not UNKNOWN_SERVER_SETTING/DUPLICATES'
+Assert-True ((Get-FindingsFor $diag 'MasterAudioVolume' 'IGNORED_NON_SERVER').Count -ge 1) 'Client audio setting (MasterAudioVolume) is classified IGNORED_NON_SERVER'
+Assert-True ((Get-FindingsFor $diag 'sg.ResolutionQuality' 'IGNORED_NON_SERVER').Count -ge 1) 'Scalability group key is classified IGNORED_NON_SERVER'
+
+# A genuinely unrecognized section (could plausibly be mod server config) must
+# stay visible as UNKNOWN_SERVER_SETTING -- the classifier must not be so
+# broad that it hides real unknowns just because they aren't in the catalog.
+Assert-True ((Get-FindingsFor $diag 'SomeModOnlySetting' 'UNKNOWN_SERVER_SETTING').Count -ge 1) 'Unrecognized mod-like section stays UNKNOWN_SERVER_SETTING, not swept into IGNORED_NON_SERVER'
+
+# Ignored entries are counted, and never removed from the raw findings --
+# only hidden from the default display filter.
+Assert-True ($diag.IgnoredNonServerCount -ge 4) 'Diagnostics reports a non-zero IgnoredNonServerCount'
+$rawIgnoredCount = (@($diag.Findings | Where-Object { $_.Category -eq 'IGNORED_NON_SERVER' })).Count
+Assert-True ($rawIgnoredCount -eq $diag.IgnoredNonServerCount) 'IgnoredNonServerCount matches the actual IGNORED_NON_SERVER findings still present in Findings (nothing deleted)'
+
+$displayFindings = @(Get-AsaConfigDiagnosticsDisplayFindings -Diagnostics $diag)
+Assert-True ((@($displayFindings | Where-Object { $_.Category -eq 'IGNORED_NON_SERVER' })).Count -eq 0) 'Default display view excludes IGNORED_NON_SERVER findings'
+Assert-True ($displayFindings.Count -lt $diag.Findings.Count) 'Default display view is strictly smaller than the full raw findings (filtering, not deleting)'
+Assert-True ((@($displayFindings | Where-Object { $_.Category -eq 'UNKNOWN_SERVER_SETTING' })).Count -ge 1) 'Default display view still includes genuine UNKNOWN_SERVER_SETTING findings'
+Assert-True ($diag.ProblemFindingsCount -eq ($diag.TotalFindings - $diag.IgnoredNonServerCount - $diag.InformationalFindingsCount)) 'ProblemFindingsCount is computed consistently from the other counts'
+
+# Ignored entries must never be modified or removed from the source lines
+# diagnostics was handed -- it is read-only end to end, not just for its output.
+$syntheticGameUserSettingsBefore = $syntheticGameUserSettings.Clone()
+Invoke-AsaConfigDiagnostics -GameUserSettingsLines $syntheticGameUserSettings -GameIniLines $syntheticGameIni | Out-Null
+Assert-True ((Compare-Object $syntheticGameUserSettingsBefore $syntheticGameUserSettings -SyncWindow 0) -eq $null) 'Diagnostics does not mutate the input INI lines, including ignored non-server entries'
 
 # Secret redaction: the password's real value must never appear anywhere in the findings.
 $anyLeakedSecret = @($diag.Findings | Where-Object { $_.Value -like '*SuperSecret123*' -or $_.Message -like '*SuperSecret123*' })
