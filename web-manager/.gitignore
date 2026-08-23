@@ -37,3 +37,4 @@ next-env.d.ts
 /outputs/
 /work/
 /.runtime/
+/local-service/.secrets/

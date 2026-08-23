@@ -1,6 +1,6 @@
 # ASA Control Deck
 
-Local-only companion for the existing Windows ASA Manager.
+Authenticated local/LAN companion for the existing Windows ASA Manager.
 
 ## Current phase
 
@@ -8,29 +8,18 @@ Local-only companion for the existing Windows ASA Manager.
 - Reads only four allow-listed values from `server-config.cmd`.
 - Shows the ASA process, map, capacity, mod count, host CPU/RAM/disk, and latest full-save backup.
 - Registers no start, stop, restart, backup, update, mod, or configuration write endpoint.
+- Uses password authentication with failed-login throttling.
 - Does not change Windows Firewall or the router.
-- Listens only on `127.0.0.1` during this phase, so it is not yet reachable from another device.
+- Can bind either to `127.0.0.1` or the Windows PC's private default-route address.
 
 The original `ASA-Manager.ps1` remains the operational source of truth. This dashboard must not introduce a second configuration source.
 
 ## Development preview
 
-Run the read-only status service from the repository root:
+For a one-click local production preview, double-click `Start-WebManager-Local.bat`. For Mac/iPhone access on the same home network, double-click `Start-WebManager-LAN.bat`. The first start asks you to create a password (username: `gustav`). Use `Stop-WebManager-Local.bat` to stop only the tracked dashboard processes.
 
-```powershell
-.\web-manager\local-service\ASA-WebStatusService.ps1
-```
+The LAN address is printed when the manager starts. A narrowly scoped Windows Firewall rule may still be required; it must not be created without Gustav's explicit approval. No router port-forward is needed or wanted.
 
-Then run the UI from `web-manager`:
+## Security boundary
 
-```powershell
-npm run dev
-```
-
-Open `http://localhost:3000`.
-
-For a one-click local production preview, double-click `Start-WebManager-Local.bat` in the repository root. Use `Stop-WebManager-Local.bat` to stop only the tracked dashboard processes.
-
-## Security boundary for the next phase
-
-Do not bind the service to the LAN until authentication, request forgery protection, rate limiting, a single-instance lock, and an explicit Windows Firewall review are implemented and tested. Write actions must call the original vetted scripts and retain Preview -> Confirm -> Backup -> Apply.
+This private-LAN version uses browser Basic authentication over HTTP. The password is stored only as a slow PBKDF2 verifier, but HTTP itself is not encrypted; use it only on Gustav's trusted home LAN and never expose port 8415 through the router. Write actions remain unavailable. Future write actions must call the original vetted scripts and retain Preview -> Confirm -> Backup -> Apply.

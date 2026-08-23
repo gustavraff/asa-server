@@ -10,12 +10,12 @@ if (-not (Test-Path -LiteralPath $RuntimeFile)) {
 $state = Get-Content -LiteralPath $RuntimeFile -Raw | ConvertFrom-Json
 $expectedRoot = [IO.Path]::GetFullPath($WebRoot)
 $stopped = New-Object Collections.Generic.List[int]
-foreach ($id in @($state.UiListenerPid, $state.ApiWrapperPid) | Select-Object -Unique) {
+foreach ($id in @($state.ServiceListenerPid, $state.ApiWrapperPid, $state.UiListenerPid) | Select-Object -Unique) {
     if (-not $id) { continue }
     $process = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
     if (-not $process) { continue }
     $command = [string]$process.CommandLine
-    if ($command -notlike "*$expectedRoot*" -and $command -notlike '*ASA-WebStatusService.ps1*') {
+    if ($command -notlike "*$expectedRoot*" -and $command -notlike '*server.mjs*') {
         throw "Refusing to stop PID $id because it is not a tracked ASA Control Deck process."
     }
     Stop-Process -Id $id -Force -ErrorAction Stop
