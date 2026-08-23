@@ -20,3 +20,8 @@ server-config.cmd.bak
 # Temporary state
 *.json
 .aider*
+
+# ASA settings knowledge base: curated source-of-truth data for
+# ASA-AI-Knowledge.ps1, not throwaway state -- keep it tracked despite *.json above.
+!asa_claude_package/*.json
+asa_claude_package/.knowledge-index.cache.json
