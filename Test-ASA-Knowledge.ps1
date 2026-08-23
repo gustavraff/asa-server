@@ -668,6 +668,194 @@ finally {
 }
 
 # ---------------------------------------------------------------------------
+# 20. Current server configuration awareness -- reads the SAME
+#     server-config.cmd / StartServer.bat ASA Manager uses to launch the
+#     server, resolves the ACTUAL current startup arguments, and answers
+#     effective-value questions deterministically. Fixture-based throughout
+#     (via $script:AsaAiTestCmdConfigPath / $script:AsaAiTestStartServerBatPath),
+#     so these tests never depend on -- or drift out of sync with -- this
+#     server's real, live server-config.cmd/StartServer.bat.
+# ---------------------------------------------------------------------------
+function New-AsaStartupFixture {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$MaxPlayers = '15',
+        [string]$Mods = '',
+        [string]$AllowSpeedLeveling = 'False',
+        [switch]$OmitWinLiveMaxPlayers,
+        [string]$ExtraExecLineTokens = ''
+    )
+    [void](New-Item -ItemType Directory -Path $Root -Force)
+    $cmdPath = Join-Path $Root 'server-config.cmd'
+    $batPath = Join-Path $Root 'StartServer.bat'
+    [IO.File]::WriteAllText($cmdPath, @"
+@echo off
+set "SERVER_NAME=Test Server"
+set "MAP=TheIsland_WP"
+set "MAX_PLAYERS=$MaxPlayers"
+set "GAME_PORT=7777"
+set "SERVER_IP=127.0.0.1"
+set "MODS=$Mods"
+set "ALLOW_SPEED_LEVELING=$AllowSpeedLeveling"
+"@)
+    $maxPlayersToken = if ($OmitWinLiveMaxPlayers) { '' } else { '-WinLiveMaxPlayers=%MAX_PLAYERS% ' }
+    [IO.File]::WriteAllText($batPath, @"
+@echo off
+setlocal
+set "EXE=C:\fake\ArkAscendedServer.exe"
+set "MOD_ARG="
+if defined MODS set "MOD_ARG=-mods=%MODS%"
+set "SPEED_ARG="
+if /I "%ALLOW_SPEED_LEVELING%"=="True" set "SPEED_ARG=-AllowSpeedLeveling"
+"%EXE%" "%MAP%?listen?SessionName=%SERVER_NAME%" -MULTIHOME -Port=%GAME_PORT% ${maxPlayersToken}-ServerPlatform=ALL %SPEED_ARG% %MOD_ARG% $ExtraExecLineTokens -log %*
+endlocal
+"@)
+    return [pscustomobject]@{ CmdConfigPath = $cmdPath; StartServerBatPath = $batPath }
+}
+
+function Set-AsaStartupFixtureOverride {
+    param($Fixture)
+    $script:AsaAiTestCmdConfigPath = $Fixture.CmdConfigPath
+    $script:AsaAiTestStartServerBatPath = $Fixture.StartServerBatPath
+}
+
+function Clear-AsaStartupFixtureOverride {
+    $script:AsaAiTestCmdConfigPath = $null
+    $script:AsaAiTestStartServerBatPath = $null
+}
+
+$startupFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('asa-startup-test-' + [guid]::NewGuid().ToString('N'))
+[void](New-Item -ItemType Directory -Path $startupFixtureRoot -Force)
+try {
+    # 20a. Explicit -WinLiveMaxPlayers value takes effect.
+    $explicitFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'explicit') -MaxPlayers '15'
+    Set-AsaStartupFixtureOverride -Fixture $explicitFixture
+    $sa = Get-AsaEffectiveStartupArguments
+    Assert-True $sa.Available 'Startup arguments: resolves successfully from a valid fixture'
+    $wlmp = Find-AsaEffectiveStartupArgumentValue -Name '-WinLiveMaxPlayers' -StartupArguments $sa
+    Assert-True ($wlmp -ne $null -and $wlmp.Value -eq '15') 'Command-line lookup: Find-AsaEffectiveStartupArgumentValue resolves -WinLiveMaxPlayers to the substituted value'
+
+    $ansExplicit = Get-AsaEffectiveSettingAnswer -SettingName 'MaxPlayers'
+    Assert-True ($ansExplicit.EffectiveSettingName -eq '-WinLiveMaxPlayers') 'Effective value: MaxPlayers query resolves to -WinLiveMaxPlayers, not the legacy setting itself'
+    Assert-True ($ansExplicit.EffectiveValue -eq '15') 'Effective value: explicit -WinLiveMaxPlayers value (15) is reported as effective'
+    Assert-True ($ansExplicit.EffectiveSource -eq 'Explicit command-line configuration') 'Effective-value precedence: explicit command-line configuration wins over the documented default'
+    Assert-True ($ansExplicit.Message -like '*Effective value: 15*') 'Effective value: answer text includes the resolved value'
+    Clear-AsaStartupFixtureOverride
+
+    # 20b. Absent -WinLiveMaxPlayers -> documented default (70).
+    $absentFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'absent') -MaxPlayers '15' -OmitWinLiveMaxPlayers
+    Set-AsaStartupFixtureOverride -Fixture $absentFixture
+    $ansAbsent = Get-AsaEffectiveSettingAnswer -SettingName 'MaxPlayers'
+    Assert-True ($ansAbsent.EffectiveSettingName -eq '-WinLiveMaxPlayers') 'Absent -WinLiveMaxPlayers: still resolves the concept to -WinLiveMaxPlayers'
+    Assert-True ($ansAbsent.EffectiveValue -eq '70') 'Absent -WinLiveMaxPlayers: falls back to the documented default (70)'
+    Assert-True ($ansAbsent.EffectiveSource -eq 'Documented default') 'Absent -WinLiveMaxPlayers: source is reported as documented default, not explicit'
+    Clear-AsaStartupFixtureOverride
+
+    # 20c. Legacy MaxPlayers (INI) + explicit replacement -- both surfaced,
+    # replacement wins as effective.
+    $legacyGuLines = @('[/Script/Engine.GameSession]', 'MaxPlayers=10')
+    $withReplacementFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'legacy-with-replacement') -MaxPlayers '15'
+    Set-AsaStartupFixtureOverride -Fixture $withReplacementFixture
+    $script:AsaAiTestConfigPathOverride = [pscustomobject]@{
+        GameUserSettings = (Join-Path $startupFixtureRoot 'legacy-gu.ini')
+        GameIni          = (Join-Path $startupFixtureRoot 'legacy-gi.ini')
+        BackupRoot       = (Join-Path $startupFixtureRoot 'legacy-backups')
+        ChangelogPath    = (Join-Path $startupFixtureRoot 'legacy-changelog.md')
+    }
+    [IO.File]::WriteAllLines($script:AsaAiTestConfigPathOverride.GameUserSettings, $legacyGuLines)
+    [IO.File]::WriteAllLines($script:AsaAiTestConfigPathOverride.GameIni, @())
+
+    $ansLegacyWithReplacement = Get-AsaEffectiveSettingAnswer -SettingName 'MaxPlayers'
+    Assert-True ($ansLegacyWithReplacement.EffectiveValue -eq '15') 'Legacy + explicit replacement: effective value comes from -WinLiveMaxPlayers (15), not legacy MaxPlayers (10)'
+    Assert-True ($ansLegacyWithReplacement.Legacy -ne $null -and $ansLegacyWithReplacement.Legacy.Value -eq '10') 'Legacy + explicit replacement: legacy MaxPlayers=10 is reported separately'
+    Assert-True ($ansLegacyWithReplacement.Legacy.StatusText -like '*not controlling*') 'Legacy + explicit replacement: legacy entry is explicitly marked as not controlling the effective value'
+    Assert-True ($ansLegacyWithReplacement.Message -like '*Legacy entry:*MaxPlayers=10*') 'Legacy + explicit replacement: answer text includes the legacy entry block'
+
+    # 20d. Legacy MaxPlayers without an explicit replacement -> default wins, legacy still reported.
+    Clear-AsaStartupFixtureOverride
+    $withoutReplacementFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'legacy-without-replacement') -MaxPlayers '15' -OmitWinLiveMaxPlayers
+    Set-AsaStartupFixtureOverride -Fixture $withoutReplacementFixture
+    $ansLegacyNoReplacement = Get-AsaEffectiveSettingAnswer -SettingName 'MaxPlayers'
+    Assert-True ($ansLegacyNoReplacement.EffectiveValue -eq '70') 'Legacy without explicit replacement: effective value is the documented default (70)'
+    Assert-True ($ansLegacyNoReplacement.Legacy -ne $null -and $ansLegacyNoReplacement.Legacy.Value -eq '10') 'Legacy without explicit replacement: legacy MaxPlayers=10 is still reported'
+    $script:AsaAiTestConfigPathOverride = $null
+
+    # 20e. Command-line lookup for other generalized concepts (not just MaxPlayers).
+    Clear-AsaStartupFixtureOverride
+    $generalFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'general') -MaxPlayers '15' -Mods '111,222'
+    Set-AsaStartupFixtureOverride -Fixture $generalFixture
+    $ansPort = Get-AsaEffectiveSettingAnswer -SettingName '-port'
+    Assert-True ($ansPort.EffectiveValue -eq '7777' -and $ansPort.EffectiveSource -eq 'Explicit command-line configuration') 'Generalized lookup: -port resolves to its explicit command-line value'
+    $ansMods = Get-AsaEffectiveSettingAnswer -SettingName '-mods'
+    Assert-True ($ansMods.EffectiveValue -eq '111,222') 'Generalized lookup: -mods resolves to the substituted MODS list'
+    $ansCluster = Get-AsaEffectiveSettingAnswer -SettingName '-clusterid'
+    Assert-True ($ansCluster.Determined -and $null -eq $ansCluster.EffectiveValue) 'Generalized lookup: -clusterid (not configured, no documented default) is a determined "not set" fact, not a guess'
+    $ansDynamicConfig = Get-AsaEffectiveSettingAnswer -SettingName '-UseDynamicConfig'
+    Assert-True ($ansDynamicConfig.EffectiveValue -eq 'False' -and $ansDynamicConfig.EffectiveSource -eq 'Documented default') 'Generalized lookup: -UseDynamicConfig absent falls back to its documented default (False)'
+    Clear-AsaStartupFixtureOverride
+
+    # 20f. Startup arguments unavailable -> "Unable to determine", never a guess.
+    $missingFixture = [pscustomobject]@{ CmdConfigPath = (Join-Path $startupFixtureRoot 'does-not-exist.cmd'); StartServerBatPath = (Join-Path $startupFixtureRoot 'does-not-exist.bat') }
+    Set-AsaStartupFixtureOverride -Fixture $missingFixture
+    $saUnavailable = Get-AsaEffectiveStartupArguments
+    Assert-True (-not $saUnavailable.Available) 'Startup arguments unavailable: correctly reports Available=$false when the files are missing'
+    $ansUnavailable = Get-AsaEffectiveSettingAnswer -SettingName '-port'
+    Assert-True (-not $ansUnavailable.Determined -and $ansUnavailable.Message -eq 'Unable to determine from current local configuration.') 'Startup arguments unavailable: effective-value answer says "unable to determine", never guesses'
+    Clear-AsaStartupFixtureOverride
+
+    # 20g. Secret-like startup arguments are redacted.
+    $secretFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'secret') -MaxPlayers '15' -ExtraExecLineTokens '-ServerAdminToken=hunter2-secret-value'
+    Set-AsaStartupFixtureOverride -Fixture $secretFixture
+    $saSecret = Get-AsaEffectiveStartupArguments
+    $secretArg = @($saSecret.Arguments | Where-Object { $_.Name -eq '-ServerAdminToken' }) | Select-Object -First 1
+    Assert-True ($secretArg -ne $null -and $secretArg.IsSecret) 'Secret redaction: a token-like startup argument name is flagged as secret'
+    Assert-True ($secretArg.DisplayValue -eq '[REDACTED]') 'Secret redaction: DisplayValue is redacted for a secret-like startup argument'
+    Assert-True ($secretArg.Value -eq 'hunter2-secret-value') 'Secret redaction: the raw value is still available internally for logic (never surfaced directly)'
+    Clear-AsaStartupFixtureOverride
+
+    # 20h. Read-only: none of these calls ever write to server-config.cmd or StartServer.bat.
+    $roFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'readonly') -MaxPlayers '15'
+    Set-AsaStartupFixtureOverride -Fixture $roFixture
+    $beforeCmd = (Get-Item -LiteralPath $roFixture.CmdConfigPath).LastWriteTimeUtc
+    $beforeBat = (Get-Item -LiteralPath $roFixture.StartServerBatPath).LastWriteTimeUtc
+    Get-AsaEffectiveStartupArguments | Out-Null
+    Get-AsaEffectiveSettingAnswer -SettingName 'MaxPlayers' | Out-Null
+    Get-AsaAiKnowledgeAnswer -Question 'What is my current effective maximum player limit, and where is it configured?' -SkipLocalExplanation | Out-Null
+    $afterCmd = (Get-Item -LiteralPath $roFixture.CmdConfigPath).LastWriteTimeUtc
+    $afterBat = (Get-Item -LiteralPath $roFixture.StartServerBatPath).LastWriteTimeUtc
+    Assert-True ($beforeCmd -eq $afterCmd) 'Read-only: server-config.cmd is never modified by any of these lookups'
+    Assert-True ($beforeBat -eq $afterBat) 'Read-only: StartServer.bat is never modified by any of these lookups'
+
+    # 20i. No external API call is required -- the effective-value Q&A path
+    # never touches Ollama (UsedLocalAi is always $false for it), so it works
+    # identically whether or not a local model is even installed.
+    $qaAnswer = Get-AsaAiKnowledgeAnswer -Question 'What is my current effective maximum player limit, and where is it configured?'
+    Assert-True (-not $qaAnswer.UsedLocalAi) 'No external API call required: effective-value Q&A never delegates to the local model'
+    Assert-True ($qaAnswer.Method -eq 'effective-value') 'No external API call required: Q&A method is reported as effective-value, not exact/keyword/none'
+    Assert-True ($qaAnswer.Answer -like '*Effective value: 15*') 'No external API call required: the deterministic answer is still fully correct without a model'
+    Clear-AsaStartupFixtureOverride
+
+    # 20j. Diagnostics integration: UNSUPPORTED MaxPlayers + explicit
+    # -WinLiveMaxPlayers replacement produces an effective-replacement /
+    # safe-cleanup-candidate finding.
+    $diagFixture = New-AsaStartupFixture -Root (Join-Path $startupFixtureRoot 'diag') -MaxPlayers '25'
+    Set-AsaStartupFixtureOverride -Fixture $diagFixture
+    $diagResult = Invoke-AsaConfigDiagnostics -GameUserSettingsLines @('[/Script/Engine.GameSession]', 'MaxPlayers=10') -GameIniLines @()
+    $unsupportedMaxPlayers = @($diagResult.Findings | Where-Object { $_.Key -eq 'MaxPlayers' -and $_.Category -eq 'UNSUPPORTED' }) | Select-Object -First 1
+    Assert-True ($unsupportedMaxPlayers -ne $null) 'Diagnostics integration: MaxPlayers still produces an UNSUPPORTED finding'
+    Assert-True ($unsupportedMaxPlayers.EffectiveValue -eq '25') 'Diagnostics integration: UNSUPPORTED finding carries the REAL effective replacement value (25), not the ignored legacy value (10)'
+    Assert-True ($unsupportedMaxPlayers.ValueSource -eq 'Explicit command-line configuration') 'Diagnostics integration: UNSUPPORTED finding records where the effective value actually comes from'
+    Assert-True ($unsupportedMaxPlayers.Message -like '*Effective replacement: -WinLiveMaxPlayers=25*') 'Diagnostics integration: message names the effective replacement setting and value'
+    Assert-True ($unsupportedMaxPlayers.Message -like '*Safe cleanup candidate*') 'Diagnostics integration: message identifies the legacy entry as a safe cleanup candidate'
+    Clear-AsaStartupFixtureOverride
+}
+finally {
+    Clear-AsaStartupFixtureOverride
+    $script:AsaAiTestConfigPathOverride = $null
+    Remove-Item -LiteralPath $startupFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 Write-Host ''

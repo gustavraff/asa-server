@@ -294,6 +294,22 @@ function Get-AsaAiKnowledgeAnswer {
         [switch]$SkipLocalExplanation
     )
 
+    # A question naming a current/effective-configuration concept ("current
+    # player limit", "which mods are loaded", ...) is answered entirely
+    # deterministically -- explicit command-line/INI value, documented
+    # default, and obsolete/replaced precedence are never left for the
+    # generative model to decide. This check runs before anything else and,
+    # when it matches, is the whole answer.
+    $effectiveValueConcept = Get-AsaEffectiveValueQueryConcept -Question $Question
+    if ($effectiveValueConcept) {
+        $effectiveAnswer = Get-AsaEffectiveSettingAnswer -SettingName $effectiveValueConcept
+        $relatedFacts = @(Find-AsaSettingExact -Name $effectiveValueConcept)
+        if ($effectiveAnswer.EffectiveSettingName -and $effectiveAnswer.EffectiveSettingName -ne $effectiveValueConcept) {
+            $relatedFacts += @(Find-AsaSettingExact -Name $effectiveAnswer.EffectiveSettingName)
+        }
+        return [pscustomobject]@{ Answer = $effectiveAnswer.Message; Facts = $relatedFacts; Method = 'effective-value'; UsedLocalAi = $false }
+    }
+
     $wordCandidates = @([regex]::Matches($Question, '[A-Za-z_][A-Za-z0-9_\[\]]*') | ForEach-Object { $_.Value })
     $exactMatches = New-Object System.Collections.Generic.List[object]
     foreach ($word in $wordCandidates) {
@@ -634,26 +650,328 @@ function New-AsaDiagnosticFinding {
     }
 }
 
-function Get-AsaStartupArgumentFindings {
-    <# Read-only, informational scan of StartServer.bat's static launch line against command-line-target catalog entries. #>
-    $findings = New-Object System.Collections.Generic.List[object]
-    $batPath = Join-Path $PSScriptRoot 'StartServer.bat'
-    if (-not (Test-Path -LiteralPath $batPath)) { return $findings.ToArray() }
+# ---------------------------------------------------------------------------
+# Current server configuration awareness -- reads the SAME files ASA Manager
+# itself uses to launch ArkAscendedServer.exe (server-config.cmd for the
+# editable values, StartServer.bat for the launch-line template) so the AI/
+# diagnostics layer never maintains a second, independent notion of "what the
+# server is actually configured to run with." Read-only throughout; never
+# writes to either file.
+# ---------------------------------------------------------------------------
+
+function Get-AsaCurrentCmdConfig {
+    <#
+    Reads server-config.cmd exactly the way ASA-Manager.ps1's own
+    Read-CmdConfig does (same file, same "set "KEY=value"" regex) -- this is
+    the same source of truth ASA Manager uses to launch the server, not a
+    second independent one.
+    #>
+    # Test-only redirection hook (mirrors $script:AsaAiTestConfigPathOverride
+    # in ASA-AI-Assistant.ps1): lets tests point this at an isolated fixture
+    # file instead of the real, live server-config.cmd. Never set in
+    # production code paths.
+    $path = if ($script:AsaAiTestCmdConfigPath) { $script:AsaAiTestCmdConfigPath } else { Join-Path $PSScriptRoot 'server-config.cmd' }
+    $values = @{}
+    if (-not (Test-Path -LiteralPath $path)) { return $values }
+    $raw = [IO.File]::ReadAllText($path)
+    foreach ($match in [regex]::Matches($raw, '(?m)^set\s+"(?<key>[A-Z_]+)=(?<value>.*)"\s*$')) {
+        $values[$match.Groups['key'].Value] = $match.Groups['value'].Value
+    }
+    return $values
+}
+
+function Get-AsaEffectiveStartupArguments {
+    <#
+    Resolves StartServer.bat's actual launch line -- the same batch file ASA
+    Manager's Start/Restart actions invoke -- into the REAL current startup
+    arguments, by substituting server-config.cmd's variables and replicating
+    StartServer.bat's own two conditional lines (-mods, -AllowSpeedLeveling).
+    This is deliberately specific to this project's StartServer.bat template
+    (a handful of "set VAR=" / "if defined VAR" lines), not a general batch
+    interpreter -- if that template changes shape, this needs updating too.
+    Read-only; never modifies either file. Any argument whose name looks
+    secret-like is redacted in DisplayValue via Test-AsaKeyLooksSecret.
+    #>
+    # Test-only redirection hook, same pattern as Get-AsaCurrentCmdConfig's.
+    $batPath = if ($script:AsaAiTestStartServerBatPath) { $script:AsaAiTestStartServerBatPath } else { Join-Path $PSScriptRoot 'StartServer.bat' }
+    if (-not (Test-Path -LiteralPath $batPath)) {
+        return [pscustomobject]@{ Available = $false; Reason = 'StartServer.bat was not found.'; Source = $null; Arguments = @(); UnresolvedPlaceholders = @() }
+    }
 
     $content = Get-Content -LiteralPath $batPath -Raw
-    $execLine = @($content -split "`r?`n") | Where-Object { $_ -match '\.exe"' } | Select-Object -First 1
-    if (-not $execLine) { return $findings.ToArray() }
+    $batLines = @($content -split "`r?`n")
+    # The real invocation line STARTS by quoting and calling the resolved exe
+    # variable (`"%EXE%" ...`) -- unlike the earlier `set "EXE=...exe"` line
+    # that merely DEFINES it, or an `if not exist "%EXE%" (` existence guard,
+    # both of which also contain "%EXE%"/".exe" but never at the line start.
+    $execLine = @($batLines | Where-Object { $_ -match '^\s*"%EXE%"' }) | Select-Object -First 1
+    if (-not $execLine) {
+        # Defensive fallback for a differently-shaped launch line, excluding
+        # any plain "set" variable definition.
+        $execLine = @($batLines | Where-Object { $_ -match '\.exe"' -and $_ -notmatch '^\s*set\b' }) | Select-Object -First 1
+    }
+    if (-not $execLine) {
+        return [pscustomobject]@{ Available = $false; Reason = 'StartServer.bat has no recognizable server .exe launch line.'; Source = $null; Arguments = @(); UnresolvedPlaceholders = @() }
+    }
 
-    $tokens = @([regex]::Matches($execLine, '(?<![\w%])[-?][A-Za-z][A-Za-z0-9_]*(=\S+)?') | ForEach-Object { $_.Value })
+    $cmdConfig = Get-AsaCurrentCmdConfig
+    if ($cmdConfig.Count -eq 0) {
+        return [pscustomobject]@{ Available = $false; Reason = 'server-config.cmd was not found or has no recognized values.'; Source = $null; Arguments = @(); UnresolvedPlaceholders = @() }
+    }
+
+    # Replicate StartServer.bat's own two conditionally-set variables.
+    $modArg = if ([string]$cmdConfig['MODS']) { '-mods=' + $cmdConfig['MODS'] } else { '' }
+    $speedArg = if (([string]$cmdConfig['ALLOW_SPEED_LEVELING']) -ieq 'True') { '-AllowSpeedLeveling' } else { '' }
+
+    $substitutions = @{}
+    foreach ($key in $cmdConfig.Keys) { $substitutions[$key] = $cmdConfig[$key] }
+    $substitutions['MOD_ARG'] = $modArg
+    $substitutions['SPEED_ARG'] = $speedArg
+
+    $resolvedLine = $execLine
+    foreach ($key in $substitutions.Keys) {
+        $resolvedLine = $resolvedLine.Replace('%' + $key + '%', [string]$substitutions[$key])
+    }
+
+    # Anything still shaped like %SOME_VAR% after substitution is a value we
+    # could not resolve (e.g. the template changed) -- surfaced, not guessed.
+    # "%*" (StartServer.bat's own passthrough of any EXTRA args it was
+    # invoked with) is a distinct batch construct, not a %VAR%, and is never
+    # resolvable from these static files alone -- deliberately not modeled.
+    $unresolvedPlaceholders = @([regex]::Matches($resolvedLine, '%[A-Za-z_][A-Za-z0-9_]*%') | ForEach-Object { $_.Value } | Select-Object -Unique)
+
+    $tokens = @([regex]::Matches($resolvedLine, '(?<![\w%])[-?][A-Za-z][A-Za-z0-9_]*(=\S*)?') | ForEach-Object { $_.Value })
+    $arguments = New-Object System.Collections.Generic.List[object]
     foreach ($token in $tokens) {
         $eq = $token.IndexOf('=')
         $name = if ($eq -ge 0) { $token.Substring(0, $eq) } else { $token }
-        $commandLineMatch = @(Find-AsaSettingExact -Name $name) | Where-Object { $_.target -eq 'command-line' }
+        $hasValue = $eq -ge 0
+        $value = if ($hasValue) { $token.Substring($eq + 1) } else { $null }
+        $isSecret = Test-AsaKeyLooksSecret -Key $name
+        $arguments.Add([pscustomobject]@{
+            Name         = $name
+            HasValue     = $hasValue
+            Value        = $value
+            DisplayValue = if ($isSecret) { '[REDACTED]' } else { $value }
+            IsSecret     = $isSecret
+        })
+    }
+
+    return [pscustomobject]@{
+        Available              = $true
+        Reason                 = $null
+        Source                 = 'StartServer.bat startup arguments (server-config.cmd)'
+        Arguments              = $arguments.ToArray()
+        UnresolvedPlaceholders = $unresolvedPlaceholders
+    }
+}
+
+function Find-AsaEffectiveStartupArgumentValue {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)]$StartupArguments
+    )
+    if (-not $StartupArguments.Available) { return $null }
+    return @($StartupArguments.Arguments | Where-Object { $_.Name -ieq $Name }) | Select-Object -First 1
+}
+
+function Resolve-AsaSingleSettingEffectiveValue {
+    <#
+    Deterministic precedence for ONE catalog entry -- never delegated to the
+    generative model: explicit command-line configuration, or explicit INI
+    configuration (whichever matches the entry's own documented target),
+    then the documented default, then a plain "not configured, no default"
+    fact. Returns Determined=$false only when we lack the information to
+    even attempt this (e.g. startup arguments unavailable for a
+    command-line-target entry) -- callers must report that as "unable to
+    determine," never fall back to guessing.
+    #>
+    param([Parameter(Mandatory)]$Entry, $StartupArguments)
+
+    $isSensitive = Get-AsaSettingIsSensitive -Entry $Entry
+
+    if ($Entry.target -eq 'command-line') {
+        if (-not $StartupArguments -or -not $StartupArguments.Available) {
+            return [pscustomobject]@{ Determined = $false; Value = $null; Source = $null; ConfiguredIn = $null }
+        }
+        $match = Find-AsaEffectiveStartupArgumentValue -Name $Entry.name -StartupArguments $StartupArguments
+        if ($match) {
+            $rawValue = if ($match.HasValue) { $match.Value } else { 'True' }
+            $displayValue = if ($isSensitive -or $match.IsSecret) { '[REDACTED]' } else { $rawValue }
+            return [pscustomobject]@{ Determined = $true; Value = $displayValue; Source = 'Explicit command-line configuration'; ConfiguredIn = $StartupArguments.Source }
+        }
+        if ($null -ne $Entry.default) {
+            return [pscustomobject]@{ Determined = $true; Value = [string]$Entry.default; Source = 'Documented default'; ConfiguredIn = $null }
+        }
+        return [pscustomobject]@{ Determined = $true; Value = $null; Source = 'Not explicitly configured (no documented default)'; ConfiguredIn = $null }
+    }
+
+    if ($Entry.target -in @('GameUserSettings.ini', 'Game.ini')) {
+        $current = Get-AsaCurrentSettingValue -Entry $Entry
+        if ($null -ne $current -and [string]$current -ne '') {
+            $displayValue = if ($isSensitive) { '[REDACTED]' } else { [string]$current }
+            return [pscustomobject]@{ Determined = $true; Value = $displayValue; Source = 'Explicit INI configuration'; ConfiguredIn = "$($Entry.target) $($Entry.section)" }
+        }
+        if ($null -ne $Entry.default) {
+            return [pscustomobject]@{ Determined = $true; Value = [string]$Entry.default; Source = 'Documented default'; ConfiguredIn = $null }
+        }
+        return [pscustomobject]@{ Determined = $true; Value = $null; Source = 'Not explicitly configured (no documented default)'; ConfiguredIn = $null }
+    }
+
+    return [pscustomobject]@{ Determined = $false; Value = $null; Source = $null; ConfiguredIn = $null }
+}
+
+function Format-AsaEffectiveValueAnswerText {
+    param(
+        [Parameter(Mandatory)][string]$EffectiveSettingName,
+        [Parameter(Mandatory)]$Result,
+        $Legacy
+    )
+
+    if (-not $Result.Determined) { return 'Unable to determine from current local configuration.' }
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add("Effective value: $(if ($null -ne $Result.Value) { $Result.Value } else { '(not set)' })")
+    [void]$lines.Add('')
+    [void]$lines.Add('Effective source:')
+    if ($Result.Source -eq 'Documented default') {
+        [void]$lines.Add("Documented default. $EffectiveSettingName is not explicitly configured.")
+    }
+    elseif ($Result.Source -like 'Not explicitly configured*') {
+        [void]$lines.Add("$EffectiveSettingName is not explicitly configured, and no default is documented.")
+    }
+    else {
+        [void]$lines.Add("$EffectiveSettingName=$($Result.Value)")
+    }
+
+    if ($Result.ConfiguredIn) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Configured in:')
+        [void]$lines.Add($Result.ConfiguredIn)
+    }
+
+    if ($Legacy) {
+        [void]$lines.Add('')
+        [void]$lines.Add('Legacy entry:')
+        [void]$lines.Add("$($Legacy.Name)=$($Legacy.Value)")
+        if ($Legacy.Location) { [void]$lines.Add($Legacy.Location) }
+        [void]$lines.Add('')
+        [void]$lines.Add('Status:')
+        [void]$lines.Add($Legacy.StatusText)
+    }
+
+    return ($lines -join "`r`n")
+}
+
+function Get-AsaEffectiveSettingAnswer {
+    <#
+    Deterministic effective-value resolution for a named setting -- the
+    generative model never decides precedence here. When the queried setting
+    is itself unsupported/obsolete and its description names a replacement
+    (e.g. MaxPlayers -> -WinLiveMaxPlayers), the REPLACEMENT's resolved value
+    is what is reported as effective; the original is reported separately as
+    a legacy/ineffective entry, but only when it actually has a value
+    configured at its own (ineffective) location.
+    #>
+    param([Parameter(Mandatory)][string]$SettingName)
+
+    $primaryCandidates = @(Find-AsaSettingExact -Name $SettingName)
+    if ($primaryCandidates.Count -eq 0) {
+        return [pscustomobject]@{ Determined = $false; EffectiveSettingName = $SettingName; EffectiveValue = $null; EffectiveSource = $null; ConfiguredIn = $null; Legacy = $null; Message = 'Unable to determine from current local configuration.' }
+    }
+    $primary = $primaryCandidates[0]
+
+    $primaryTags = Get-AsaSettingStatusTags -Entry $primary
+    $replacementName = $null
+    if ($primaryTags -contains 'UNSUPPORTED' -or $primaryTags -contains 'OBSOLETE') {
+        $replacementName = Get-AsaObsoleteReplacementHint -Entry $primary
+    }
+
+    $effective = $primary
+    $legacySource = $null
+    if ($replacementName) {
+        $replacementCandidates = @(Find-AsaSettingExact -Name $replacementName | Where-Object { (Get-AsaSettingStatusTags -Entry $_) -contains 'SUPPORTED' })
+        if ($replacementCandidates.Count -gt 0) {
+            $effective = $replacementCandidates[0]
+            $legacySource = $primary
+        }
+    }
+
+    $startupArguments = $null
+    if ($effective.target -eq 'command-line') { $startupArguments = Get-AsaEffectiveStartupArguments }
+    $result = Resolve-AsaSingleSettingEffectiveValue -Entry $effective -StartupArguments $startupArguments
+
+    $legacyInfo = $null
+    if ($legacySource -and $legacySource.target -in @('GameUserSettings.ini', 'Game.ini')) {
+        $legacyValue = Get-AsaCurrentSettingValue -Entry $legacySource
+        if ($null -ne $legacyValue -and [string]$legacyValue -ne '') {
+            $legacyDisplayValue = if (Get-AsaSettingIsSensitive -Entry $legacySource) { '[REDACTED]' } else { [string]$legacyValue }
+            $legacyInfo = [pscustomobject]@{
+                Name       = $legacySource.name
+                Value      = $legacyDisplayValue
+                Location   = "$($legacySource.target) $($legacySource.section)"
+                StatusText = "$($legacySource.name) is not controlling the effective value."
+            }
+        }
+    }
+
+    $message = Format-AsaEffectiveValueAnswerText -EffectiveSettingName $effective.name -Result $result -Legacy $legacyInfo
+    return [pscustomobject]@{
+        Determined           = $result.Determined
+        EffectiveSettingName = $effective.name
+        EffectiveValue       = $result.Value
+        EffectiveSource      = $result.Source
+        ConfiguredIn         = $result.ConfiguredIn
+        Legacy               = $legacyInfo
+        Message              = $message
+    }
+}
+
+# Deterministic phrase -> canonical setting-name map for "what is my current
+# X" style questions. Matching here NEVER touches the local model -- a plain
+# keyword check, so which concept (and therefore which catalog entry/
+# precedence) is being asked about is never left for the model to invent.
+$script:AsaEffectiveValueQueryConcepts = [ordered]@{
+    'MaxPlayers'        = @('player limit', 'max player', 'maximum player', 'how many players')
+    '-port'             = @('server port', 'which port', 'game port', 'what port')
+    '-ServerPlatform'   = @('platform', 'platforms allowed', 'crossplay', 'which platforms')
+    '-mods'             = @('mods loaded', 'which mods', 'mod list', 'loaded mods', 'mods are loaded')
+    '-UseDynamicConfig' = @('dynamicconfig', 'dynamic config')
+    '-clusterid'        = @('cluster id', 'cluster name', 'which cluster')
+}
+
+function Get-AsaEffectiveValueQueryConcept {
+    <#
+    Deterministic keyword match only -- never delegated to the model. The
+    phrase list itself is deliberately narrow/specific ("player limit",
+    "which mods", "cluster id", ...) so a plain "what does -mods do?"
+    question (no such phrase present) still gets the normal facts-only
+    answer instead of being redirected here.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Question)
+
+    $lower = $Question.ToLowerInvariant()
+    foreach ($setting in $script:AsaEffectiveValueQueryConcepts.Keys) {
+        foreach ($phrase in $script:AsaEffectiveValueQueryConcepts[$setting]) {
+            if ($lower.Contains($phrase)) { return $setting }
+        }
+    }
+    return $null
+}
+
+function Get-AsaStartupArgumentFindings {
+    <# Read-only, informational scan of StartServer.bat's ACTUAL RESOLVED launch arguments (server-config.cmd substituted in) against command-line-target catalog entries. #>
+    $findings = New-Object System.Collections.Generic.List[object]
+    $startupArguments = Get-AsaEffectiveStartupArguments
+    if (-not $startupArguments.Available) { return $findings.ToArray() }
+
+    foreach ($argument in $startupArguments.Arguments) {
+        $commandLineMatch = @(Find-AsaSettingExact -Name $argument.Name) | Where-Object { $_.target -eq 'command-line' }
         if (-not $commandLineMatch) { continue }
         $entry = $commandLineMatch[0]
         foreach ($tag in (Get-AsaSettingStatusTags -Entry $entry)) {
             if ($tag -eq 'SUPPORTED') { continue }
-            [void]$findings.Add((New-AsaDiagnosticFinding -Category $tag -File 'StartServer.bat' -Section '(startup arguments)' -Key $name -Value '' -Line 0 -Message $entry.description))
+            [void]$findings.Add((New-AsaDiagnosticFinding -Category $tag -File 'StartServer.bat' -Section '(startup arguments)' -Key $argument.Name -Value $argument.DisplayValue -Line 0 -Message $entry.description))
         }
     }
     return $findings.ToArray()
@@ -689,6 +1007,12 @@ function Invoke-AsaConfigDiagnostics {
     [void]$parsed.AddRange([object[]]@(ConvertFrom-AsaIniLines -Lines $GameIniLines -TargetFile 'Game.ini'))
 
     $findings = New-Object System.Collections.Generic.List[object]
+    # Computed once per run (not per finding) -- read-only snapshot of the
+    # server's ACTUAL current startup arguments, reused below so an
+    # unsupported/obsolete setting's real effective replacement (e.g.
+    # MaxPlayers -> -WinLiveMaxPlayers) can be shown, not just its own
+    # ignored value.
+    $diagnosticsStartupArguments = Get-AsaEffectiveStartupArguments
 
     $groups = $parsed | Group-Object -Property { $_.TargetFile + '|' + $_.Section + '|' + $_.Key }
     foreach ($group in $groups) {
@@ -753,11 +1077,29 @@ function Invoke-AsaConfigDiagnostics {
             if ($tag -eq 'SUPPORTED') { continue }
             $extra = ''
             $replacementHint = $null
-            if ($tag -eq 'OBSOLETE') {
+            $effectiveValueText = $null
+            $effectiveValueSource = $null
+            if ($tag -eq 'OBSOLETE' -or $tag -eq 'UNSUPPORTED') {
                 $replacementHint = Get-AsaObsoleteReplacementHint -Entry $best
-                if ($replacementHint) { $extra = " Replacement: $replacementHint." }
+                if ($replacementHint) {
+                    $extra = " Replacement: $replacementHint."
+                    # Look up the replacement's REAL current effective value
+                    # (startup arguments or INI, per its own documented
+                    # target) so the finding shows what's actually governing
+                    # behavior, not just that a replacement exists in theory.
+                    $replacementEntry = @(Find-AsaSettingExact -Name $replacementHint | Where-Object { (Get-AsaSettingStatusTags -Entry $_) -contains 'SUPPORTED' }) | Select-Object -First 1
+                    if ($replacementEntry) {
+                        $resolvedReplacement = Resolve-AsaSingleSettingEffectiveValue -Entry $replacementEntry -StartupArguments $diagnosticsStartupArguments
+                        if ($resolvedReplacement.Determined) {
+                            $effectiveValueText = $resolvedReplacement.Value
+                            $effectiveValueSource = $resolvedReplacement.Source
+                            $shownValue = if ($null -ne $effectiveValueText) { $effectiveValueText } else { '(not set)' }
+                            $extra += " Effective replacement: $($replacementEntry.name)=$shownValue ($effectiveValueSource). Safe cleanup candidate: this legacy $($best.name) entry can be removed without changing the effective value."
+                        }
+                    }
+                }
             }
-            [void]$findings.Add((New-AsaDiagnosticFinding -Category $tag -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "$($best.description)$extra" -Replacement $replacementHint))
+            [void]$findings.Add((New-AsaDiagnosticFinding -Category $tag -File $item.TargetFile -Section $item.Section -Key $item.Key -Value $displayValue -Line $item.LineNumber -Message "$($best.description)$extra" -Replacement $replacementHint -EffectiveValue $effectiveValueText -ValueSource $effectiveValueSource))
         }
 
         if ($best.value_type -eq 'array') {
