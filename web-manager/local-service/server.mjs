@@ -86,8 +86,8 @@ function proxyUi(request, response) {
 createServer(async (request, response) => {
   try {
     if (!['GET','HEAD'].includes(request.method)) return send(response, 405, 'application/json', JSON.stringify({ error: 'Method not allowed', readOnly: true }));
-    if (!authenticated(request)) return challenge(request, response);
     if (request.url === '/api/status') return send(response, 200, 'application/json; charset=utf-8', await getStatus());
+    if (!authenticated(request)) return challenge(request, response);
     return proxyUi(request, response);
   } catch { send(response, 500, 'application/json', JSON.stringify({ error: 'Read-only status service error', readOnly: true })); }
 }).listen(port, host, () => console.log(`ASA authenticated read-only web manager listening on http://${host}:${port}/ (UI 127.0.0.1:${uiPort})`));
