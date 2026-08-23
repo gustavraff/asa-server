@@ -29,7 +29,7 @@ The package intentionally does **not** try to make every wiki option part of nor
 
 ## Counts
 
-- core: 147
+- core: 149
 - leveling: 10
 - spawns: 14
 - loot_items_engrams: 9
