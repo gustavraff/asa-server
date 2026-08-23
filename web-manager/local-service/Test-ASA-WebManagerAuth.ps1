@@ -22,7 +22,7 @@ try {
     [void](New-Item -ItemType Directory -Path $authFolder -Force)
     if (Test-Path -LiteralPath $liveConfig) { throw 'Targeted test refuses to replace the live web manager authentication file.' }
     Copy-Item -LiteralPath $config -Destination $liveConfig
-    $ui = Start-Process npm.cmd -ArgumentList @('start','--','--host','127.0.0.1','--port','13000') -WorkingDirectory $WebRoot -WindowStyle Hidden -PassThru
+    $ui = Start-Process npm.cmd -ArgumentList @('start','--','--hostname','127.0.0.1','--port','13000') -WorkingDirectory $WebRoot -WindowStyle Hidden -PassThru
     $service = Start-Process node.exe -ArgumentList @(
         (Join-Path $PSScriptRoot 'server.mjs'), '--host', '127.0.0.1', '--port', $port, '--ui-port', '13000'
     ) -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru

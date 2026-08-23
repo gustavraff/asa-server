@@ -36,7 +36,7 @@ $listenAddress = if ($Lan) {
     if (-not $candidate) { throw 'No private LAN IPv4 address was found.' }
     $candidate
 } else { '127.0.0.1' }
-$ui = Start-Process npm.cmd -ArgumentList @('start','--','--host','127.0.0.1','--port','3000') -WorkingDirectory $WebRoot -WindowStyle Hidden -PassThru
+$ui = Start-Process npm.cmd -ArgumentList @('start','--','--hostname','127.0.0.1','--port','3000') -WorkingDirectory $WebRoot -WindowStyle Hidden -PassThru
 $api = Start-Process node.exe -ArgumentList @($ServiceScript,'--host',$listenAddress,'--port','8415','--ui-port','3000') -WorkingDirectory $WebRoot -WindowStyle Hidden -PassThru
 
 try {
