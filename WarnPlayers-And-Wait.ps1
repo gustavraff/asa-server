@@ -40,16 +40,26 @@ try {
         exit 0
     }
 
-    Invoke-RconWithRetry 'Broadcast SERVER RESTART IN 60 SECONDS - Please leave safely now.' | Out-Null
+    function Send-PlayerWarning([string]$Message) {
+        # Sent on two separate channels (center-screen overlay and chat) because
+        # a UI-replacement mod (for example a pause-menu mod) can suppress one
+        # rendering path without affecting the other. RCON always acknowledges
+        # with a generic "Server received, But no response!!" either way, so
+        # this is belt-and-suspenders rather than something we can verify here.
+        Invoke-RconWithRetry "Broadcast $Message" | Out-Null
+        Invoke-RconWithRetry "ServerChat $Message" | Out-Null
+    }
+
+    Send-PlayerWarning 'SERVER RESTART IN 60 SECONDS - Please leave safely now.'
     Start-Sleep -Seconds 30
-    Invoke-RconWithRetry 'Broadcast SERVER RESTART IN 30 SECONDS - Please leave now.' | Out-Null
+    Send-PlayerWarning 'SERVER RESTART IN 30 SECONDS - Please leave now.'
     Start-Sleep -Seconds 20
-    Invoke-RconWithRetry 'Broadcast SERVER RESTART IN 10 SECONDS - Disconnect now.' | Out-Null
+    Send-PlayerWarning 'SERVER RESTART IN 10 SECONDS - Disconnect now.'
     Start-Sleep -Seconds 10
-    Invoke-RconWithRetry 'Broadcast SERVER RESTARTING NOW' | Out-Null
+    Send-PlayerWarning 'SERVER RESTARTING NOW'
     Start-Sleep -Seconds 2
 
-    [IO.File]::WriteAllText($resultPath, 'SUCCESS: Connected players received 60, 30, 10, and 0 second restart warnings.', $utf8NoBom)
+    [IO.File]::WriteAllText($resultPath, 'SUCCESS: 60/30/10/0 second restart warnings were sent to the server via both Broadcast and ServerChat. RCON does not confirm on-screen delivery, so this does not guarantee players actually saw them.', $utf8NoBom)
 }
 catch {
     [IO.File]::WriteAllText($resultPath, ('ERROR: ' + $_.Exception.Message), $utf8NoBom)

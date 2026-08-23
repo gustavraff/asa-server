@@ -168,23 +168,6 @@ function Set-CmdConfigValue([string]$Key, [string]$Value) {
     Write-TextFileAtomic $CmdConfig $raw
 }
 
-function Get-IniValue([string]$Key) {
-    $raw = [IO.File]::ReadAllText($GameUserSettings)
-    $match = [regex]::Match($raw, '(?m)^' + [regex]::Escape($Key) + '=(?<value>.*)$')
-    if ($match.Success) { return $match.Groups['value'].Value.Trim() }
-    return ''
-}
-
-function Set-IniValue([string]$Key, [string]$Value) {
-    $raw = [IO.File]::ReadAllText($GameUserSettings)
-    $pattern = '(?m)^' + [regex]::Escape($Key) + '=.*$'
-    if (-not [regex]::IsMatch($raw, $pattern)) {
-        throw "Missing setting $Key in GameUserSettings.ini"
-    }
-    $raw = [regex]::Replace($raw, $pattern, $Key + '=' + $Value, 1)
-    Write-TextFileAtomic $GameUserSettings $raw
-}
-
 function Get-IniValueFromFile([string]$Path, [string]$Key, [string]$Default = '') {
     if (-not (Test-Path $Path)) { return $Default }
     $raw = [IO.File]::ReadAllText($Path)
@@ -376,8 +359,8 @@ function Get-ServerHealthItems {
 
     $adminPassword = Get-IniValueFromFile $GameUserSettings 'ServerAdminPassword' ''
     $joinPassword = Get-IniValueFromFile $GameUserSettings 'ServerPassword' ''
-    if ($adminPassword.Length -ge 8) {
-        $items.Add((New-HealthItem 'OK' 'Admin protection' 'An admin password of at least 8 characters is configured. Its value is never shown here.'))
+    if ($adminPassword.Length -ge 4) {
+        $items.Add((New-HealthItem 'OK' 'Admin protection' 'An admin password of at least 4 characters is configured. Its value is never shown here.'))
     }
     else {
         $items.Add((New-HealthItem 'BLOCKER' 'Admin protection' 'Set an admin password of at least 4 characters in Important server settings.'))
@@ -571,9 +554,9 @@ function Load-Settings {
         if ($mapBox.SelectedIndex -lt 0) { $mapBox.Text = $config['MAP'] }
         $playersBox.Value = Get-SafeDecimal $config['MAX_PLAYERS'] 10 $playersBox.Minimum $playersBox.Maximum
         $modsBox.Text = $config['MODS']
-        $xpBox.Value = Get-SafeDecimal (Get-IniValue 'XPMultiplier') 1 $xpBox.Minimum $xpBox.Maximum
-        $harvestBox.Value = Get-SafeDecimal (Get-IniValue 'HarvestAmountMultiplier') 1 $harvestBox.Minimum $harvestBox.Maximum
-        $tamingBox.Value = Get-SafeDecimal (Get-IniValue 'TamingSpeedMultiplier') 1 $tamingBox.Minimum $tamingBox.Maximum
+        $xpBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'XPMultiplier' '1') 1 $xpBox.Minimum $xpBox.Maximum
+        $harvestBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'HarvestAmountMultiplier' '1') 1 $harvestBox.Minimum $harvestBox.Maximum
+        $tamingBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'TamingSpeedMultiplier' '1') 1 $tamingBox.Minimum $tamingBox.Maximum
         $script:BasicSettingsDirty = $false
     }
     finally {
@@ -605,11 +588,11 @@ function Save-Settings {
     Set-CmdConfigValue 'MAP' $map
     Set-CmdConfigValue 'MAX_PLAYERS' ([string][int]$playersBox.Value)
     Set-CmdConfigValue 'MODS' $mods
-    Set-IniValue 'SessionName' $name
-    Set-IniValue 'MaxPlayers' ([string][int]$playersBox.Value)
-    Set-IniValue 'XPMultiplier' $xpBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
-    Set-IniValue 'HarvestAmountMultiplier' $harvestBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
-    Set-IniValue 'TamingSpeedMultiplier' $tamingBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+    Set-IniSectionValue $GameUserSettings '[SessionSettings]' 'SessionName' $name
+    Set-IniSectionValue $GameUserSettings '[/Script/Engine.GameSession]' 'MaxPlayers' ([string][int]$playersBox.Value)
+    Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'XPMultiplier' $xpBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+    Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'HarvestAmountMultiplier' $harvestBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+    Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'TamingSpeedMultiplier' $tamingBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
     $script:BasicSettingsDirty = $false
 
     if (Get-ServerProcess) {
@@ -682,7 +665,7 @@ function Show-AdminManager {
 function Show-RatesDialog {
     $dialog = New-Object Windows.Forms.Form
     $dialog.Text = 'Guided rates - ASA Manager'
-    $dialog.Size = New-Object Drawing.Size(820, 900)
+    $dialog.Size = New-Object Drawing.Size(820, 980)
     $dialog.StartPosition = 'CenterParent'
     $dialog.BackColor = $Background
     $dialog.ForeColor = $Text
@@ -709,7 +692,10 @@ function Show-RatesDialog {
         @{ Key='BabyMatureSpeedMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Baby maturation'; Default='1.0'; Min=0.1; Max=100; Explain='Higher makes baby creatures reach adulthood faster.' },
         @{ Key='BabyCuddleIntervalMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Imprint interval'; Default='1.0'; Min=0.01; Max=10; Explain='Lower requests imprint care more often. Keep this roughly inverse to maturation speed.' },
         @{ Key='BabyImprintAmountMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Imprint per care'; Default='1.0'; Min=0.1; Max=100; Explain='Higher gives more imprint progress per care. 100 makes the first successful care reach 100%.' },
-        @{ Key='CropGrowthSpeedMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Crop growth'; Default='1.0'; Min=0.1; Max=100; Explain='Higher makes crops grow faster.' }
+        @{ Key='CropGrowthSpeedMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Crop growth'; Default='1.0'; Min=0.1; Max=100; Explain='Higher makes crops grow faster.' },
+        @{ Key='StructureResistanceMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Structure toughness'; Default='1.0'; Min=0.05; Max=5; Explain='Lower makes structures take less damage. 0.5 means roughly half damage; 0.1 is nearly indestructible.' },
+        @{ Key='DinoCharacterFoodDrainMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Dino food drain'; Default='1.0'; Min=0.1; Max=10; Explain='Lower means dinos get hungry more slowly (wild and tamed).' },
+        @{ Key='DinoCharacterStaminaDrainMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Dino stamina drain'; Default='1.0'; Min=0.1; Max=10; Explain='Lower means dinos tire out more slowly while sprinting or flying.' }
     )
 
     $rateControls = @{}
@@ -733,11 +719,11 @@ function Show-RatesDialog {
         $y += 45
     }
 
-    $officialButton = New-Button 'Official 1x preset' 20 770 130 ([Drawing.Color]::FromArgb(79, 99, 125))
-    $relaxedButton = New-Button 'Relaxed private preset' 158 770 150 $Green
-    $noWipeButton = New-Button 'Balanced No-Wipe' 316 770 145 ([Drawing.Color]::FromArgb(46, 150, 145))
-    $fastButton = New-Button 'Fast private preset' 469 770 135 $Amber
-    $saveRatesButton = New-Button 'Save rates' 612 770 170 $Blue
+    $officialButton = New-Button 'Official 1x preset' 20 905 130 ([Drawing.Color]::FromArgb(79, 99, 125))
+    $relaxedButton = New-Button 'Relaxed private preset' 158 905 150 $Green
+    $noWipeButton = New-Button 'Balanced No-Wipe' 316 905 145 ([Drawing.Color]::FromArgb(46, 150, 145))
+    $fastButton = New-Button 'Fast private preset' 469 905 135 $Amber
+    $saveRatesButton = New-Button 'Save rates' 612 905 170 $Blue
     $dialog.Controls.AddRange(@($officialButton, $relaxedButton, $noWipeButton, $fastButton, $saveRatesButton))
 
     $officialButton.Add_Click({
@@ -895,8 +881,9 @@ function Show-CraftingCostsDialog {
                 if (-not $rawResource) { continue }
                 $parts = $rawResource.Split('=', 2)
                 if ($parts.Count -ne 2 -or $parts[0].Trim() -notmatch '^[A-Za-z0-9_]+_C$') { throw "Invalid resource line: $rawResource" }
-                $amount = Get-SafeDecimal $parts[1].Trim() -1 0.01 1000000
-                if ($amount -lt 0) { throw "Invalid amount in: $rawResource" }
+                [decimal]$amount = 0
+                $amountValid = [decimal]::TryParse($parts[1].Trim(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$amount)
+                if (-not $amountValid -or $amount -lt 0.01 -or $amount -gt 1000000) { throw "Invalid amount in: $rawResource" }
                 $amountText = $amount.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
                 $requirements.Add('(ResourceItemTypeString="' + $parts[0].Trim() + '",BaseResourceRequirement=' + $amountText + ',bCraftingRequireExactResourceType=False)')
             }
@@ -935,7 +922,7 @@ function Show-CraftingCostsDialog {
 function Show-ProgressionDialog {
     $dialog = New-Object Windows.Forms.Form
     $dialog.Text = 'Progression and world time - ASA Manager'
-    $dialog.Size = New-Object Drawing.Size(840, 900)
+    $dialog.Size = New-Object Drawing.Size(840, 950)
     $dialog.StartPosition = 'CenterParent'
     $dialog.BackColor = $Background
     $dialog.ForeColor = $Text
@@ -951,13 +938,14 @@ function Show-ProgressionDialog {
         @{ Key='KillXPMultiplier'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Kill XP'; Base=1.0; Min=0.1; Max=20; Explain='XP awarded for kills. This stacks with the main XP rate.' },
         @{ Key='PerLevelStatsMultiplier_Player[1]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player stamina / level'; Base=1.0; Min=0.1; Max=20; Explain='Stamina gained whenever a player spends one level point.' },
         @{ Key='PerLevelStatsMultiplier_Player[7]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player weight / level'; Base=1.0; Min=0.1; Max=20; Explain='Weight gained whenever a player spends one level point.' },
+        @{ Key='PerLevelStatsMultiplier_Player[8]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player melee / level'; Base=1.0; Min=0.1; Max=20; Explain='Melee damage gained whenever a player spends one level point.' },
         @{ Key='PerLevelStatsMultiplier_Player[11]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player crafting / level'; Base=1.0; Min=0.1; Max=20; Explain='Crafting skill gained whenever a player spends one level point.' },
         @{ Key='PerLevelStatsMultiplier_Player[9]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player movement / level'; Base=1.0; Min=0.1; Max=20; Explain='1.0 is about +1.5% movement per point. Native ASA has no hard maximum for this stat.' },
         @{ Key='PerLevelStatsMultiplier_Player[10]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Player fortitude / level'; Base=1.0; Min=0.1; Max=20; Explain='Fortitude gained per point: improves heat, cold, disease and knockout resistance.' },
-        @{ Key='PerLevelStatsMultiplier_DinoTamed[0]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Dino health / level'; Base=0.2; Min=0.1; Max=10; Explain='Health gained when spending a level on a tamed dino.' },
+        @{ Key='PerLevelStatsMultiplier_DinoTamed[0]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Dino health / level'; Base=1.0; Min=0.1; Max=10; Explain='Health gained when spending a level on a tamed dino. 1.0 is vanilla.' },
         @{ Key='PerLevelStatsMultiplier_DinoTamed[1]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Dino stamina / level'; Base=1.0; Min=0.1; Max=10; Explain='Stamina gained when spending a level on a tamed dino.' },
         @{ Key='PerLevelStatsMultiplier_DinoTamed[7]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Dino weight / level'; Base=1.0; Min=0.1; Max=20; Explain='Weight gained when spending a level on a tamed dino.' },
-        @{ Key='PerLevelStatsMultiplier_DinoTamed[8]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Dino melee / level'; Base=0.17; Min=0.1; Max=10; Explain='Melee damage gained when spending a level on a tamed dino.' },
+        @{ Key='PerLevelStatsMultiplier_DinoTamed[8]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Dino melee / level'; Base=1.0; Min=0.1; Max=10; Explain='Melee damage gained when spending a level on a tamed dino. 1.0 is vanilla.' },
         @{ Key='DayCycleSpeedScale'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Whole day cycle'; Base=1.0; Min=0.1; Max=10; Explain='Higher makes the entire day/night cycle pass faster.' },
         @{ Key='DayTimeSpeedScale'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Daytime speed'; Base=1.0; Min=0.1; Max=10; Explain='Lower makes daylight last longer.' },
         @{ Key='NightTimeSpeedScale'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Night speed'; Base=1.0; Min=0.1; Max=10; Explain='Higher makes nighttime end sooner.' }
@@ -989,21 +977,22 @@ function Show-ProgressionDialog {
 
     $speedCheck = New-Object Windows.Forms.CheckBox
     $speedCheck.Text = 'Allow native movement-speed leveling (players and non-flyers; no hard cap)'
-    $speedCheck.Location = New-Object Drawing.Point(22, 730)
+    $speedCheck.Location = New-Object Drawing.Point(22, 779)
     $speedCheck.Size = New-Object Drawing.Size(650, 28)
     $speedCheck.ForeColor = $Text
     $speedCheck.Checked = ([string](Read-CmdConfig)['ALLOW_SPEED_LEVELING']) -ieq 'True'
     $dialog.Controls.Add($speedCheck)
 
-    $vanillaButton = New-Button 'Set all to vanilla 1x' 22 775 180 ([Drawing.Color]::FromArgb(79, 99, 125))
-    $balancedButton = New-Button 'Balanced private preset' 216 775 190 $Green
-    $saveButton = New-Button 'Save progression + time' 584 775 220 $Blue
+    $vanillaButton = New-Button 'Set all to vanilla 1x' 22 824 180 ([Drawing.Color]::FromArgb(79, 99, 125))
+    $balancedButton = New-Button 'Balanced private preset' 216 824 190 $Green
+    $saveButton = New-Button 'Save progression + time' 584 824 220 $Blue
     $dialog.Controls.AddRange(@($vanillaButton, $balancedButton, $saveButton))
     $vanillaButton.Add_Click({ foreach ($control in $controls.Values) { $control.Value = 1.0 }; $speedCheck.Checked = $false })
     $balancedButton.Add_Click({
         $controls['KillXPMultiplier'].Value = 1.25
         $controls['PerLevelStatsMultiplier_Player[1]'].Value = 2.0
         $controls['PerLevelStatsMultiplier_Player[7]'].Value = 3.0
+        $controls['PerLevelStatsMultiplier_Player[8]'].Value = 1.6
         $controls['PerLevelStatsMultiplier_Player[11]'].Value = 1.5
         $controls['PerLevelStatsMultiplier_Player[9]'].Value = 1.0
         $controls['PerLevelStatsMultiplier_Player[10]'].Value = 3.0
@@ -1093,6 +1082,135 @@ function Show-ModManager {
             $modsBox.Text = $ids
             if (Get-ServerProcess) { Show-Info 'Mod list saved. ASA downloads/updates these mods on the next restart.' }
             else { Show-Info 'Mod list saved. ASA downloads/updates these mods when it starts.' }
+            $dialog.Close()
+        }
+        catch { Show-ErrorBox $_.Exception.Message }
+    })
+    [void]$dialog.ShowDialog($form)
+}
+
+function Show-WildDinoDialog {
+    $dialog = New-Object Windows.Forms.Form
+    $dialog.Text = 'Wild dino settings - ASA Manager'
+    $dialog.Size = New-Object Drawing.Size(820, 800)
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.BackColor = $Background
+    $dialog.ForeColor = $Text
+    $dialog.FormBorderStyle = 'FixedDialog'
+    $dialog.MaximizeBox = $false
+
+    $heading = New-Label 'Wild dino population, difficulty and toughness' 20 16 650 34 $Text 17
+    $heading.Font = New-Object Drawing.Font('Segoe UI Semibold', 17)
+    $dialog.Controls.Add($heading)
+    $dialog.Controls.Add((New-Label 'A wild dino wipe is needed for these changes to affect dinos already in the world (PS5 admin + performance help, or the AI Assistant).' 22 52 760 24 $Muted 9))
+
+    $entries = @(
+        @{ Key='DinoCountMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Dino population'; Default='1.0'; Min=0.1; Max=5.0; Explain='How many wild dinos spawn on the map overall. 1.0 is standard density.' },
+        @{ Key='DinoCharacterHealthRecoveryMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Health regen speed'; Default='1.0'; Min=0.1; Max=20.0; Explain='How fast dinos regenerate lost health over time. Affects wild and tamed dinos together.' },
+        @{ Key='SupplyCrateLootQualityMultiplier'; File=$GameUserSettings; Section='[ServerSettings]'; Label='Supply crate loot quality'; Default='1.0'; Min=0.5; Max=10.0; Explain='Higher gives better-quality loot in supply crates. Does not change how often crates spawn.' },
+        @{ Key='PerLevelStatsMultiplier_DinoWild[0]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Wild dino health / level'; Default='1.0'; Min=0.1; Max=3.0; Explain='Health gained per wild dino level. Lower makes high-level wild dinos less tanky. 1.0 is vanilla.' },
+        @{ Key='PerLevelStatsMultiplier_DinoWild[8]'; File=$GameIni; Section='[/Script/ShooterGame.ShooterGameMode]'; Label='Wild dino melee / level'; Default='1.0'; Min=0.1; Max=3.0; Explain='Melee damage gained per wild dino level. Lower makes high-level wild dinos hit less hard. 1.0 is vanilla.' }
+    )
+
+    $dialog.Controls.Add((New-Label 'Max wild dino level' 22 88 180 24 $Text 9))
+    $difficultyBox = New-Object Windows.Forms.NumericUpDown
+    $difficultyBox.Location = New-Object Drawing.Point(205, 86)
+    $difficultyBox.Size = New-Object Drawing.Size(92, 26)
+    $difficultyBox.DecimalPlaces = 2
+    $difficultyBox.Increment = 0.5
+    $difficultyBox.Minimum = 0.2
+    $difficultyBox.Maximum = 5.0
+    $difficultyBox.BackColor = $InputColor
+    $difficultyBox.ForeColor = $Text
+    $difficultyBox.Value = Get-SafeDecimal (Get-IniValueFromFile $GameUserSettings 'OverrideOfficialDifficulty' '1.0') 1.0 $difficultyBox.Minimum $difficultyBox.Maximum
+    $dialog.Controls.Add($difficultyBox)
+    $difficultyExplain = New-Label ("Max wild dino level is roughly value x 30 = {0}. 5.0 is the official-server max (level 150)." -f [int]($difficultyBox.Value * 30)) 318 84 460 36 $Muted 8.5
+    $dialog.Controls.Add($difficultyExplain)
+    $difficultyBox.Add_ValueChanged({
+        $difficultyExplain.Text = "Max wild dino level is roughly value x 30 = $([int]($difficultyBox.Value * 30)). 5.0 is the official-server max (level 150)."
+    })
+
+    $controls = @{}
+    $y = 137
+    foreach ($entry in $entries) {
+        $dialog.Controls.Add((New-Label $entry.Label 22 $y 180 24 $Text 9))
+        $number = New-Object Windows.Forms.NumericUpDown
+        $number.Location = New-Object Drawing.Point(205, ($y - 2))
+        $number.Size = New-Object Drawing.Size(92, 26)
+        $number.DecimalPlaces = 2
+        $number.Increment = 0.1
+        $number.Minimum = [decimal]$entry.Min
+        $number.Maximum = [decimal]$entry.Max
+        $number.BackColor = $InputColor
+        $number.ForeColor = $Text
+        $current = Get-IniValueFromFile $entry.File $entry.Key $entry.Default
+        $number.Value = Get-SafeDecimal $current ([decimal]$entry.Default) $number.Minimum $number.Maximum
+        $controls[$entry.Key] = $number
+        $dialog.Controls.Add($number)
+        $dialog.Controls.Add((New-Label $entry.Explain 318 ($y - 2) 460 36 $Muted 8.5))
+        $y += 45
+    }
+
+    $dialog.Controls.Add((New-Label 'Level distribution' 22 ($y + 8) 200 24 $Text 11))
+    $y += 38
+    $equalRadio = New-Object Windows.Forms.RadioButton
+    $equalRadio.Text = 'Equal chance for every level (default)'
+    $equalRadio.Location = New-Object Drawing.Point(22, $y)
+    $equalRadio.Size = New-Object Drawing.Size(740, 26)
+    $equalRadio.ForeColor = $Text
+    $dialog.Controls.Add($equalRadio)
+    $y += 30
+    $highRadio = New-Object Windows.Forms.RadioButton
+    $highRadio.Text = 'Skewed toward high levels'
+    $highRadio.Location = New-Object Drawing.Point(22, $y)
+    $highRadio.Size = New-Object Drawing.Size(740, 26)
+    $highRadio.ForeColor = $Text
+    $dialog.Controls.Add($highRadio)
+    $y += 30
+    $ragRadio = New-Object Windows.Forms.RadioButton
+    $ragRadio.Text = 'Ragnarok-style (boosted high-level chance, but still skewed low overall; some levels never spawn)'
+    $ragRadio.Location = New-Object Drawing.Point(22, $y)
+    $ragRadio.Size = New-Object Drawing.Size(740, 26)
+    $ragRadio.ForeColor = $Text
+    $dialog.Controls.Add($ragRadio)
+    $y += 34
+    $dialog.Controls.Add((New-Label 'From the Custom Dino Levels mod (928708), if installed. Only one option applies at a time.' 22 $y 700 22 $Muted 8.5))
+    $y += 30
+
+    $currentHigh = (Get-IniValueFromFile $GameUserSettings 'WantsHighLevels' 'False') -ieq 'True'
+    $currentRag = (Get-IniValueFromFile $GameUserSettings 'WantsRagLevels' 'False') -ieq 'True'
+    if ($currentHigh) { $highRadio.Checked = $true }
+    elseif ($currentRag) { $ragRadio.Checked = $true }
+    else { $equalRadio.Checked = $true }
+
+    $casualButton = New-Button 'Apply tonight''s casual-high preset' 22 ($y + 6) 280 ([Drawing.Color]::FromArgb(46, 150, 145))
+    $saveButton = New-Button 'Save wild dino settings' 550 ($y + 6) 232 $Blue
+    $dialog.Controls.AddRange(@($casualButton, $saveButton))
+
+    $casualButton.Add_Click({
+        $difficultyBox.Value = 5.0
+        $controls['DinoCountMultiplier'].Value = 0.7
+        $controls['DinoCharacterHealthRecoveryMultiplier'].Value = 4.0
+        $controls['SupplyCrateLootQualityMultiplier'].Value = 2.0
+        $controls['PerLevelStatsMultiplier_DinoWild[0]'].Value = 0.6
+        $controls['PerLevelStatsMultiplier_DinoWild[8]'].Value = 0.6
+        $highRadio.Checked = $true
+    })
+
+    $saveButton.Add_Click({
+        try {
+            if (-not (Ensure-ServerStoppedForConfigWrite)) { return }
+            [void](New-ConfigSnapshot 'wild-dino-settings')
+            Set-IniSectionValue $GameUserSettings '[ServerSettings]' 'OverrideOfficialDifficulty' $difficultyBox.Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+            foreach ($entry in $entries) {
+                $value = $controls[$entry.Key].Value.ToString('0.0###', [Globalization.CultureInfo]::InvariantCulture)
+                Set-IniSectionValue $entry.File $entry.Section $entry.Key $value
+            }
+            Set-IniSectionValue $GameUserSettings '[CustomLevelDistrib]' 'WantsEqualLevels' $equalRadio.Checked.ToString()
+            Set-IniSectionValue $GameUserSettings '[CustomLevelDistrib]' 'WantsHighLevels' $highRadio.Checked.ToString()
+            Set-IniSectionValue $GameUserSettings '[CustomLevelDistrib]' 'WantsRagLevels' $ragRadio.Checked.ToString()
+            if (Get-ServerProcess) { Show-Info 'Wild dino settings saved. Restart ASA, then use a wild dino wipe to see the effect on existing dinos.' }
+            else { Show-Info 'Wild dino settings saved. They will be active at the next start.' }
             $dialog.Close()
         }
         catch { Show-ErrorBox $_.Exception.Message }
@@ -1585,20 +1703,21 @@ if ($HealthCheckOnly) {
 
 $form = New-Object Windows.Forms.Form
 $form.Text = if ($TestMode) { '[TEST MODE] Gustav''s ARK: Survival Ascended Server Manager' } else { 'Gustav''s ARK: Survival Ascended Server Manager' }
-$form.Size = New-Object Drawing.Size(1040, 780)
+$form.Size = New-Object Drawing.Size(1040, 840)
 $form.StartPosition = 'CenterScreen'
 $form.BackColor = $Background
 $form.ForeColor = $Text
 $form.Font = New-Object Drawing.Font('Segoe UI', 10)
-$form.MinimumSize = New-Object Drawing.Size(1040, 780)
+$form.MinimumSize = New-Object Drawing.Size(1040, 840)
 
 $title = New-Label 'ARK: SURVIVAL ASCENDED' 24 18 500 40 $Text 20
 $title.Font = New-Object Drawing.Font('Segoe UI Semibold', 20)
 $form.Controls.Add($title)
 $subtitle = New-Label 'Private PS5 crossplay server control panel' 27 56 500 24 $Muted 10
 $form.Controls.Add($subtitle)
+$aiAssistantButton = New-Button 'AI Assistant' 650 26 150 $Green
 $guideButton = New-Button 'Files + guide' 814 26 165 ([Drawing.Color]::FromArgb(117, 92, 190))
-$form.Controls.Add($guideButton)
+$form.Controls.AddRange(@($aiAssistantButton, $guideButton))
 
 $statusGroup = New-Group 'Server status' 24 92 978 92
 $statusDot = New-Label 'O' 18 27 30 36 $Red 20
@@ -1617,7 +1736,7 @@ $backupButton = New-Button 'Safe backup' 769 31 185 ([Drawing.Color]::FromArgb(1
 $controlsGroup.Controls.AddRange(@($startButton, $stopButton, $restartButton, $updateButton, $backupButton))
 $form.Controls.Add($controlsGroup)
 
-$settingsGroup = New-Group 'Easy server settings' 24 328 620 300
+$settingsGroup = New-Group 'Easy server settings' 24 328 620 356
 $settingsGroup.Controls.Add((New-Label 'Server name' 18 31 130))
 $serverNameBox = New-TextBox 160 29 425
 $settingsGroup.Controls.Add($serverNameBox)
@@ -1687,22 +1806,23 @@ $progressionButton = New-Button 'Stats + time' 438 247 148 $Amber
 $settingsGroup.Controls.AddRange(@($saveSettingsButton, $manageModsButton, $moreRatesButton, $progressionButton))
 $form.Controls.Add($settingsGroup)
 
-$toolsGroup = New-Group 'Tools and PS5 admin' 660 328 342 300
+$toolsGroup = New-Group 'Tools and PS5 admin' 660 328 342 356
 $openLogsButton = New-Button 'Open server logs' 18 31 145 ([Drawing.Color]::FromArgb(79, 99, 125))
 $openBackupsButton = New-Button 'Open backups' 177 31 145 ([Drawing.Color]::FromArgb(79, 99, 125))
 $advisorButton = New-Button 'Run offline server advisor' 18 86 304 $Green
 $importantButton = New-Button 'Important server settings' 18 141 304 $Blue
 $ps5HelpButton = New-Button 'PS5 admin + performance help' 18 196 304 ([Drawing.Color]::FromArgb(117, 92, 190))
 $openConfigButton = New-Button 'Custom crafting costs' 18 251 304 ([Drawing.Color]::FromArgb(79, 99, 125))
-$toolsGroup.Controls.AddRange(@($openLogsButton, $openBackupsButton, $advisorButton, $importantButton, $ps5HelpButton, $openConfigButton))
+$wildDinoButton = New-Button 'Wild dino settings' 18 306 304 ([Drawing.Color]::FromArgb(46, 150, 145))
+$toolsGroup.Controls.AddRange(@($openLogsButton, $openBackupsButton, $advisorButton, $importantButton, $ps5HelpButton, $openConfigButton, $wildDinoButton))
 $form.Controls.Add($toolsGroup)
 
-$saveStatus = New-Label 'Latest world save: checking...' 28 646 600 24 $Muted 9
+$saveStatus = New-Label 'Latest world save: checking...' 28 702 600 24 $Muted 9
 $form.Controls.Add($saveStatus)
-$safetyNote = New-Label 'Firewall/router settings are intentionally not controlled here.' 650 646 350 24 $Muted 9
+$safetyNote = New-Label 'Firewall/router settings are intentionally not controlled here.' 650 702 350 24 $Muted 9
 $safetyNote.TextAlign = 'MiddleRight'
 $form.Controls.Add($safetyNote)
-$pendingStatus = New-Label 'Checking for unsaved changes...' 28 677 970 24 $Muted 9
+$pendingStatus = New-Label 'Checking for unsaved changes...' 28 733 970 24 $Muted 9
 $pendingStatus.TextAlign = 'MiddleCenter'
 $form.Controls.Add($pendingStatus)
 
@@ -1749,7 +1869,17 @@ $openBackupsButton.Add_Click({ if (-not (Test-Path $BackupsFolder)) { [void](New
 $openConfigButton.Add_Click({ Show-CraftingCostsDialog })
 $advisorButton.Add_Click({ Show-ServerAdvisor })
 $importantButton.Add_Click({ Show-ImportantSettingsDialog })
+$wildDinoButton.Add_Click({ Show-WildDinoDialog })
 $ps5HelpButton.Add_Click({ Show-Ps5HelpDialog })
+$aiAssistantButton.Add_Click({
+    $aiPanel = Join-Path $Root 'ASA-AI-Panel.ps1'
+    if (-not (Test-Path -LiteralPath $aiPanel)) {
+        Show-ErrorBox "AI Assistant panel is missing:`n$aiPanel"
+        return
+    }
+    try { & $aiPanel }
+    catch { Show-ErrorBox ('AI Assistant failed safely: ' + $_.Exception.Message) }
+})
 $guideButton.Add_Click({ Show-ServerFilesHelp })
 
 $toolTip = New-Object Windows.Forms.ToolTip
@@ -1759,6 +1889,8 @@ $toolTip.SetToolTip($tamingBox, 'Higher values make taming finish faster. Your b
 $toolTip.SetToolTip($modsBox, 'Use numeric CurseForge ASA Project IDs separated by commas. The Manage Mods button is easier.')
 $toolTip.SetToolTip($mapBox, 'Uses exact released ASA level names. Aberration is Aberration_WP. Changing maps keeps the old map save in its own folder.')
 $toolTip.SetToolTip($advisorButton, 'Runs a password-safe, read-only check of ASA files, crossplay, resources, rates, mods, networking, and backups.')
+$toolTip.SetToolTip($wildDinoButton, 'Controls wild dino population density, max level, level distribution, per-level toughness, health regen, and loot quality.')
+$toolTip.SetToolTip($aiAssistantButton, 'Opens the local Ollama AI Assistant. It acts immediately on allow-listed settings and server actions (start/stop/restart/update/backup).')
 $toolTip.SetToolTip($guideButton, 'Explains every important ASA server file and opens the selected file or folder directly.')
 
 $script:BasicSettingsDirty = $false
