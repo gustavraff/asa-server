@@ -23,6 +23,11 @@ server-config.cmd.bak
 *.json
 .aider*
 
+# The local web manager's source manifests are part of the project.
+!web-manager/package.json
+!web-manager/package-lock.json
+!web-manager/.openai/hosting.json
+
 # ASA settings knowledge base: curated source-of-truth data for
 # ASA-AI-Knowledge.ps1, not throwaway state -- keep it tracked despite *.json above.
 !asa_claude_package/*.json
