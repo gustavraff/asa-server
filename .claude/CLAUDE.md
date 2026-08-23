@@ -74,6 +74,8 @@ Every AI-driven change — rate settings, actions, recipe overrides, relocations
 ## USAGE AUDIT AND OVERUSE CONTROL
 - `AI-Usage-Audit.ps1 -ShowWindow` records a local post-task audit. The user may enter official before/after credit values; never estimate an exact credit charge and present it as measured.
 - Before a substantial task, provide a LOW/MEDIUM/HIGH preflight usage-risk estimate based on the planned files, tool calls, scans, research, and tests. `AI-Usage-Audit.ps1 -Preflight` provides the shared deterministic rating. If risk is HIGH, reduce the plan or ask Gustav before proceeding. This is a relative warning, never an exact credit prediction.
+- Model routing: LOW tasks use a small/fast model such as Haiku when available; MEDIUM tasks use Sonnet; HIGH tasks start with Sonnet and escalate to Opus only when complexity, failed attempts, or live-system risk justifies it. Choose before starting rather than switching repeatedly mid-task.
+- Keep the official `session-report` plugin enabled for periodic evidence-based optimization. Keep `claude-code-setup` installed but normally disabled after setup, avoiding its always-on prompt overhead.
 - The audit is local efficiency evidence, not OpenAI/Anthropic billing data. It cannot refund, restore, or reimburse credits.
 - Reuse already verified evidence unless a new change could invalidate it. Do not rerun map changes, full scans, server restarts, or full test suites merely to prove unrelated functionality again.
 - For narrow changes, test the changed feature and its directly affected paths. For shared infrastructure, run the full suite once before commit.

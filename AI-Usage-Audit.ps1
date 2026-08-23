@@ -47,12 +47,24 @@ function Get-PreflightEstimate([int]$ToolCalls,[int]$RepeatedActions,[int]$FullS
     $score += (20 * $FullScans)
     $score += (12 * $FullTestSuites)
     if ($score -le 8 -and $FullScans -eq 0 -and $FullTestSuites -eq 0) {
-        return [pscustomobject]@{ Level='LOW'; Detail='Small targeted task. Proceed with focused reads and one targeted verification.' }
+        return [pscustomobject]@{
+            Level='LOW'
+            Detail='Small targeted task. Proceed with focused reads and one targeted verification.'
+            ModelRecommendation='Claude: small/fast model such as Haiku when available. Codex: lightweight tier/low reasoning such as Luna when available.'
+        }
     }
     if ($score -le 25 -and $FullScans -eq 0 -and $FullTestSuites -le 1) {
-        return [pscustomobject]@{ Level='MEDIUM'; Detail='Moderate task. Combine searches and stop if the planned scope expands.' }
+        return [pscustomobject]@{
+            Level='MEDIUM'
+            Detail='Moderate task. Combine searches and stop if the planned scope expands.'
+            ModelRecommendation='Claude: Sonnet. Codex: balanced tier/medium reasoning such as Terra when available.'
+        }
     }
-    return [pscustomobject]@{ Level='HIGH'; Detail='Potentially expensive task. Reduce scope or ask the user before continuing.' }
+    return [pscustomobject]@{
+        Level='HIGH'
+        Detail='Potentially expensive task. Reduce scope or ask the user before continuing.'
+        ModelRecommendation='Claude: start with Sonnet and escalate to Opus only if justified. Codex: frontier tier such as Sol only when the task needs it.'
+    }
 }
 
 function Format-AuditReport($Entry) {
@@ -90,7 +102,7 @@ if ($LatestReport) {
 
 if ($Preflight) {
     $estimate = Get-PreflightEstimate $PlannedToolCalls $PlannedRepeatedActions $PlannedFullScans $PlannedFullTestSuites
-    Write-Output ("{0}: {1}" -f $estimate.Level,$estimate.Detail)
+    Write-Output ("{0}: {1} Model: {2}" -f $estimate.Level,$estimate.Detail,$estimate.ModelRecommendation)
     exit 0
 }
 
@@ -168,6 +180,7 @@ $preflight.Add_Click({
     $report.Text = @(
         "PREFLIGHT USAGE RISK: $($estimate.Level)",
         $estimate.Detail,
+        ('Recommended model: ' + $estimate.ModelRecommendation),
         '',
         ('Planned activity: {0} tool calls, {1} repeated actions, {2} full scans, {3} full test-suite runs.' -f $tools.Value,$repeats.Value,$scans.Value,$suites.Value),
         'This is a relative workload estimate, not an exact credit prediction. Check Settings > Usage for the official balance.'
