@@ -27,7 +27,7 @@ export default function Home() {
       try {
         const localPreview = ['localhost', '127.0.0.1'].includes(window.location.hostname) && window.location.port !== '8415';
         const api = localPreview ? 'http://127.0.0.1:8415/api/status' : '/api/status';
-        const response = await fetch(api, { cache: 'no-store' });
+        const response = await fetch(api, { cache: 'no-store', credentials: 'include' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json() as StatusPayload;
         if (active) { setStatus(payload); setError(''); }
