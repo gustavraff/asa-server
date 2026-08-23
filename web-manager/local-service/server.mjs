@@ -52,7 +52,7 @@ function securityHeaders(response) {
   response.setHeader('X-Frame-Options', 'DENY');
   response.setHeader('Referrer-Policy', 'no-referrer');
   response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  response.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:");
+  response.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:");
 }
 
 function send(response, statusCode, contentType, body = '') {
