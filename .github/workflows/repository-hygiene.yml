@@ -42,7 +42,7 @@ jobs:
           done
           exit $big
 
-      - name: Check for likely secret patterns in this PR's diff
+      - name: Scan this PR's diff for secrets with gitleaks
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
@@ -50,8 +50,10 @@ jobs:
             echo "Not a pull request context, skipping diff-based checks."
             exit 0
           fi
-          if git diff "$BASE" "$HEAD" | grep -Ei '(api[_-]?key|secret|password|token)\s*[:=]\s*["'\''A-Za-z0-9_-]{8,}' ; then
-            echo "::error::Diff contains text matching a likely-secret pattern. Review before merging."
-            exit 1
-          fi
-          echo "No likely-secret patterns found in diff."
+
+          GITLEAKS_VERSION="8.30.1"
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+
+          ./gitleaks detect --source . --log-opts="${BASE}..${HEAD}" --redact --no-banner

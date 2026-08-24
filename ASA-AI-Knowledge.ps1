@@ -995,10 +995,16 @@ function Invoke-AsaConfigDiagnostics {
     if (-not $PSBoundParameters.ContainsKey('GameUserSettingsLines') -or -not $PSBoundParameters.ContainsKey('GameIniLines')) {
         $paths = Get-AsaAiFixedConfigPaths
         if (-not $PSBoundParameters.ContainsKey('GameUserSettingsLines')) {
-            $GameUserSettingsLines = if (Test-Path -LiteralPath $paths.GameUserSettings) { [IO.File]::ReadAllLines($paths.GameUserSettings) } else { @() }
+            # Leading comma on the empty-array branch: an `if` expression's
+            # value is captured via the pipeline, and an empty array
+            # enumerates to zero pipeline objects -- which collapses to
+            # $null on assignment, not @(). The comma emits the (empty)
+            # array as a single object instead, so a missing INI file still
+            # binds cleanly to ConvertFrom-AsaIniLines' -Lines parameter.
+            $GameUserSettingsLines = if (Test-Path -LiteralPath $paths.GameUserSettings) { [IO.File]::ReadAllLines($paths.GameUserSettings) } else { ,@() }
         }
         if (-not $PSBoundParameters.ContainsKey('GameIniLines')) {
-            $GameIniLines = if (Test-Path -LiteralPath $paths.GameIni) { [IO.File]::ReadAllLines($paths.GameIni) } else { @() }
+            $GameIniLines = if (Test-Path -LiteralPath $paths.GameIni) { [IO.File]::ReadAllLines($paths.GameIni) } else { ,@() }
         }
     }
 
