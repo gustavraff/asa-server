@@ -45,3 +45,25 @@ here.
   — those still need a manual run per `.claude/CLAUDE.md`.
 - The web manager's lint/build run automatically; there is currently no
   automated test suite for it.
+
+## AI assistance on GitHub (`@claude`)
+
+Mention `@claude` in an issue, a new issue's body, or a PR review comment to
+get help directly on GitHub (`.github/workflows/claude.yml`), separate from
+running Claude Code locally in this repo:
+
+- Only accounts with write access to this repo can trigger it (on this
+  private repo, that's Gustav).
+- It answers questions, investigates, and can propose changes — but it never
+  pushes to `main`, merges, closes issues/PRs, or approves its own work. For
+  a code change it commits to a new branch and posts a link to create the
+  PR; a human still opens and reviews it.
+- It runs on a GitHub-hosted runner with no path to the live ASA server —
+  it cannot start/stop/restart the server or touch live config, regardless
+  of what's asked.
+- Billing: uses `CLAUDE_CODE_OAUTH_TOKEN` (Gustav's Claude subscription
+  usage), not a separate pay-per-token API key.
+- Local Claude Code sessions in this repo can also use the **GitHub MCP
+  server** (`claude mcp list` should show `github: ... Connected`) for
+  direct read access to repo/issue/PR/Actions data instead of shelling out
+  to `gh` — same GitHub identity, no separate setup.
