@@ -19,7 +19,8 @@ $ErrorActionPreference = 'Stop'
 # Deterministic helpers below may apply only allow-listed settings to two fixed INI files.
 $script:AllowedSettings = [ordered]@{
     XPMultiplier                         = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=100.0; Note='Overall XP multiplier.' }
-    HarvestAmountMultiplier              = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=100.0; Note='Resources gathered per hit.' }
+    HarvestAmountMultiplier              = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=100.0; Note='Resources gathered per hit, for players and dinos combined.' }
+    DinoHarvestingDamageMultiplier        = @{ TargetFile='Game.ini'; Section='[/Script/ShooterGame.ShooterGameMode]'; Min=0.1; Max=10.0; Note='Resources gathered per hit from tamed dinos only (does not affect players). Default 3.2; lower this to reduce tamed-dino harvest yield.' }
     TamingSpeedMultiplier                = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=100.0; Note='Higher makes taming complete faster.' }
     PassiveTameIntervalMultiplier        = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.05; Max=10.0;  Note='Lower shortens the wait between passive tame feeds.' }
     PlayerResistanceMultiplier           = @{ TargetFile='GameUserSettings.ini'; Section='[ServerSettings]'; Min=0.1;  Max=5.0;   Note='Lower means players take less incoming damage.' }
