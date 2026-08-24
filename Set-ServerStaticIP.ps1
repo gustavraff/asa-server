@@ -1,3 +1,10 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingComputerNameHardcoded',
+    '',
+    Justification = 'This script configures a fixed static IP (192.168.1.179) on a specific known LAN; 192.168.1.1 is that LAN''s router/gateway, not an arbitrary hardcoded remote host.'
+)]
+param()
+
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $resultPath = Join-Path $root 'Set-ServerStaticIP-last-result.txt'
