@@ -31,7 +31,7 @@ jobs:
   knowledge-diagnostics:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run Test-ASA-Knowledge.ps1
         shell: powershell
