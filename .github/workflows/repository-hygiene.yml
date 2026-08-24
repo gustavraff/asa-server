@@ -1,0 +1,57 @@
+name: Repository hygiene
+
+# Read-only checks. Never closes issues, merges, or modifies repository
+# state -- reports problems only.
+
+on:
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: repository-hygiene-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for large files in this PR's diff
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$BASE" ] || [ -z "$HEAD" ]; then
+            echo "Not a pull request context, skipping diff-based checks."
+            exit 0
+          fi
+          big=0
+          for f in $(git diff --name-only --diff-filter=AM "$BASE" "$HEAD"); do
+            if [ -f "$f" ]; then
+              size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+              if [ "$size" -gt 10485760 ]; then
+                echo "::error file=$f::File is $((size / 1048576))MB, over the 10MB hygiene limit."
+                big=1
+              fi
+            fi
+          done
+          exit $big
+
+      - name: Check for likely secret patterns in this PR's diff
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$BASE" ] || [ -z "$HEAD" ]; then
+            echo "Not a pull request context, skipping diff-based checks."
+            exit 0
+          fi
+          if git diff "$BASE" "$HEAD" | grep -Ei '(api[_-]?key|secret|password|token)\s*[:=]\s*["'\''A-Za-z0-9_-]{8,}' ; then
+            echo "::error::Diff contains text matching a likely-secret pattern. Review before merging."
+            exit 1
+          fi
+          echo "No likely-secret patterns found in diff."

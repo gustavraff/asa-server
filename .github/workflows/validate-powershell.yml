@@ -1,0 +1,69 @@
+name: Validate PowerShell
+
+on:
+  pull_request:
+    paths:
+      - "**.ps1"
+      - "**.psm1"
+      - "!backups/**"
+      - "!config-snapshots/**"
+  push:
+    branches: [main]
+    paths:
+      - "**.ps1"
+      - "**.psm1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: validate-powershell-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  script-analyzer:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: powershell
+        run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Run PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $paths = Get-ChildItem -Path . -Recurse -Filter *.ps1 |
+            Where-Object {
+              $_.FullName -notmatch '\\backups\\' -and
+              $_.FullName -notmatch '\\config-snapshots\\' -and
+              $_.FullName -notmatch '\\node_modules\\' -and
+              $_.FullName -notmatch '\\test-results\\'
+            }
+
+          $results = @()
+          foreach ($file in $paths) {
+            $results += Invoke-ScriptAnalyzer -Path $file.FullName -Severity Warning,Error
+          }
+
+          if ($results.Count -gt 0) {
+            $results | Format-Table -AutoSize
+            Write-Error "PSScriptAnalyzer found $($results.Count) warning(s)/error(s)."
+            exit 1
+          }
+
+          Write-Host "PSScriptAnalyzer: no warnings or errors."
+
+  knowledge-base-tests:
+    name: ASA knowledge base tests (no Ollama)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Test-ASA-Knowledge.ps1
+        shell: powershell
+        run: |
+          .\Test-ASA-Knowledge.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

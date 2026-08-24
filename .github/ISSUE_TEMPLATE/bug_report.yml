@@ -1,0 +1,154 @@
+name: Bug report
+description: Something in the ASA Control Deck, manager scripts, or web manager isn't working as expected.
+labels: ["bug", "needs-investigation"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Exact steps, in order, starting from a known state.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: e.g. Windows 11, PowerShell 5.1, web-manager on Node 22.13
+    validations:
+      required: false
+
+  - type: input
+    id: affected-files
+    attributes:
+      label: Affected files or feature
+      placeholder: e.g. ASA-AI-Assistant.ps1, web-manager/app/dashboard
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant sanitized log excerpt
+      description: Paste only what's needed to diagnose. Remove passwords, tokens, IPs, and player identifiers first.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: recent-changes
+    attributes:
+      label: Recent changes
+      description: Anything changed recently in config, mods, or code that might be related?
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: Tests already attempted
+    validations:
+      required: false
+
+  - type: dropdown
+    id: backup-available
+    attributes:
+      label: Backup availability
+      options:
+        - "Yes, a recent verified backup exists"
+        - "Yes, but not recently verified"
+        - "No"
+        - "Not applicable"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: live-impact
+    attributes:
+      label: Live-system impact
+      options:
+        - "Live server is currently affected"
+        - "Live server is stopped / not affected"
+        - "Not applicable (web manager / tooling only)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: server-running
+    attributes:
+      label: Is the ASA server currently running?
+      options:
+        - "Yes"
+        - "No"
+        - "Unknown / not applicable"
+    validations:
+      required: false
+
+  - type: input
+    id: map
+    attributes:
+      label: Map
+      placeholder: e.g. Aberration_WP
+    validations:
+      required: false
+
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mod-relevance
+    attributes:
+      label: Mod-list relevance
+      options:
+        - "Not related to mods"
+        - "May be related to a specific mod"
+        - "Happens only with mods enabled"
+        - "Unknown"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: crossplay
+    attributes:
+      label: PS5 / crossplay relevance
+      options:
+        - "Not related to PS5/crossplay"
+        - "Only affects PS5/crossplay players"
+        - "Affects all platforms"
+        - "Unknown"
+    validations:
+      required: false
+
+  - type: input
+    id: last-known-good
+    attributes:
+      label: Last known working state
+      placeholder: e.g. commit hash, date, or "worked before last mod update"
+    validations:
+      required: false

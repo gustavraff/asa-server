@@ -1,0 +1,40 @@
+name: Validate ASA configuration knowledge
+
+# Runs the deterministic settings knowledge base / diagnostics tests
+# (Test-ASA-Knowledge.ps1) whenever the knowledge base or its engine change.
+# This never touches a live GameUserSettings.ini/Game.ini -- only the
+# checked-in asa_claude_package/ dataset and the deterministic resolver code.
+
+on:
+  pull_request:
+    paths:
+      - "asa_claude_package/**"
+      - "ASA-AI-Knowledge.ps1"
+      - "ASA-AI-Assistant.ps1"
+      - "Test-ASA-Knowledge.ps1"
+  push:
+    branches: [main]
+    paths:
+      - "asa_claude_package/**"
+      - "ASA-AI-Knowledge.ps1"
+      - "ASA-AI-Assistant.ps1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: validate-asa-config-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  knowledge-diagnostics:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Test-ASA-Knowledge.ps1
+        shell: powershell
+        run: |
+          .\Test-ASA-Knowledge.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
