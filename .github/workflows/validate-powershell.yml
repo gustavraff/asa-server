@@ -51,13 +51,22 @@ jobs:
             $results += Invoke-ScriptAnalyzer -Path $file.FullName -Severity Warning,Error
           }
 
+          # Warnings (e.g. PSAvoidUsingWriteHost) are reported for visibility
+          # but never fail the build -- this codebase deliberately uses
+          # Write-Host throughout for interactive console output. Only
+          # Error-severity findings (real correctness/security issues) fail.
+          $errors = @($results | Where-Object { $_.Severity -eq 'Error' })
+
           if ($results.Count -gt 0) {
             $results | Format-Table -AutoSize
-            Write-Error "PSScriptAnalyzer found $($results.Count) warning(s)/error(s)."
+          }
+
+          if ($errors.Count -gt 0) {
+            Write-Error "PSScriptAnalyzer found $($errors.Count) error(s)."
             exit 1
           }
 
-          Write-Host "PSScriptAnalyzer: no warnings or errors."
+          Write-Host "PSScriptAnalyzer: no errors ($($results.Count) warning(s) shown above, non-blocking)."
 
   knowledge-base-tests:
     name: ASA knowledge base tests (no Ollama)

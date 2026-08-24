@@ -15,6 +15,7 @@ $uiListenerPid = $null
 
 try {
     [void](New-Item -ItemType Directory -Path $TestRoot -Force)
+    # PSScriptAnalyzer disable-next-line PSAvoidUsingConvertToSecureStringWithPlainText -- $password is a fresh per-run GUID-based test credential (see line 7), never a real secret.
     $secure = ConvertTo-SecureString $password -AsPlainText -Force
     & (Join-Path $PSScriptRoot 'Initialize-ASA-WebManagerAuth.ps1') -Password $secure -ConfigPath $config
     $ui = Start-Process npm.cmd -ArgumentList @('start','--','--hostname','127.0.0.1','--port','13000') -WorkingDirectory $WebRoot -WindowStyle Hidden -PassThru
