@@ -26,7 +26,7 @@ jobs:
     name: PSScriptAnalyzer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install PSScriptAnalyzer
         shell: powershell
@@ -72,7 +72,7 @@ jobs:
     name: ASA knowledge base tests (no Ollama)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run Test-ASA-Knowledge.ps1
         shell: powershell
