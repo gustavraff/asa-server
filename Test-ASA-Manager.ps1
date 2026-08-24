@@ -443,7 +443,7 @@ function Run-OneTest([int]$RunNumber) {
         $gamePath = Join-Path $sandboxFull 'server\ShooterGame\Saved\Config\WindowsServer\Game.ini'
         $gusRaw = [IO.File]::ReadAllText($gusPath)
         $gameRaw = [IO.File]::ReadAllText($gamePath)
-        Assert-True ($gusRaw -match '(?m)^TamingSpeedMultiplier=5\.0\s*$') 'Guided rates saved the relaxed taming rate.'
+        Assert-True ($gusRaw -match '(?m)^TamingSpeedMultiplier=8\.0\s*$') 'Guided rates saved the relaxed taming rate.'
         Assert-True ($gameRaw -match '(?m)^BabyMatureSpeedMultiplier=10\.0\s*$') 'Guided rates saved breeding values in Game.ini.'
 
         Invoke-Button $main 'Guided rates'

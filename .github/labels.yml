@@ -1,0 +1,63 @@
+# Reference label set for gustavraff/asa-server.
+#
+# Not applied automatically -- this repo has no authenticated GitHub CLI
+# session yet (see Phase 1 audit). Once `gh auth login` is done, apply with:
+#
+#   gh label create "<name>" --color "<hex>" --description "<description>" --force
+#
+# (loop over the entries below, or use a label-sync action later if desired).
+
+- name: bug
+  color: "d73a4a"
+  description: Something isn't working as expected.
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or improvement.
+- name: documentation
+  color: "0075ca"
+  description: Documentation only.
+- name: security
+  color: "b60205"
+  description: Security-relevant issue or change.
+- name: configuration
+  color: "fbca04"
+  description: ASA server or manager configuration.
+- name: tests
+  color: "c2e0c6"
+  description: Test coverage or test infrastructure.
+- name: dependencies
+  color: "0366d6"
+  description: Dependency updates.
+- name: deployment
+  color: "5319e7"
+  description: Release or deployment process.
+- name: needs-investigation
+  color: "e4e669"
+  description: Root cause not yet understood.
+- name: needs-manual-test
+  color: "fef2c0"
+  description: Cannot be fully verified by automated checks alone.
+- name: breaking-change
+  color: "b60205"
+  description: Changes behavior in a way existing setups must account for.
+- name: web-manager
+  color: "1d76db"
+  description: The Next.js LAN web manager (web-manager/).
+- name: powershell
+  color: "5319e7"
+  description: PowerShell manager/automation scripts.
+- name: mods
+  color: "c5def5"
+  description: Mod handling or the mod review queue.
+- name: crossplay
+  color: "bfd4f2"
+  description: PS5 / crossplay relevant.
+- name: save-data
+  color: "d4c5f9"
+  description: World save data.
+- name: live-server
+  color: "e99695"
+  description: Directly affects the running live server.
+- name: needs-manual-live-server-test
+  color: "f9d0c4"
+  description: Automated checks can't cover this -- needs a manual live-server test.

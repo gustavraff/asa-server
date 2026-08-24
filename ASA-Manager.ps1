@@ -55,6 +55,7 @@ $BackupsFolder = Join-Path $Root 'backups'
 $AdminWhitelist = Join-Path $Root 'server\ShooterGame\Saved\AllowedCheaterAccountIDs.txt'
 $ManagerLog = Join-Path $Root 'ASA-Manager.log'
 $GuidePath = Join-Path $Root 'ASA-SERVER-GUIDE.html'
+$UsageAuditPs1 = Join-Path $Root 'AI-Usage-Audit.ps1'
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $Background = [Drawing.Color]::FromArgb(25, 29, 36)
@@ -1703,12 +1704,12 @@ if ($HealthCheckOnly) {
 
 $form = New-Object Windows.Forms.Form
 $form.Text = if ($TestMode) { '[TEST MODE] Gustav''s ARK: Survival Ascended Server Manager' } else { 'Gustav''s ARK: Survival Ascended Server Manager' }
-$form.Size = New-Object Drawing.Size(1040, 840)
+$form.Size = New-Object Drawing.Size(1040, 900)
 $form.StartPosition = 'CenterScreen'
 $form.BackColor = $Background
 $form.ForeColor = $Text
 $form.Font = New-Object Drawing.Font('Segoe UI', 10)
-$form.MinimumSize = New-Object Drawing.Size(1040, 840)
+$form.MinimumSize = New-Object Drawing.Size(1040, 900)
 
 $title = New-Label 'ARK: SURVIVAL ASCENDED' 24 18 500 40 $Text 20
 $title.Font = New-Object Drawing.Font('Segoe UI Semibold', 20)
@@ -1806,7 +1807,7 @@ $progressionButton = New-Button 'Stats + time' 438 247 148 $Amber
 $settingsGroup.Controls.AddRange(@($saveSettingsButton, $manageModsButton, $moreRatesButton, $progressionButton))
 $form.Controls.Add($settingsGroup)
 
-$toolsGroup = New-Group 'Tools and PS5 admin' 660 328 342 356
+$toolsGroup = New-Group 'Tools and PS5 admin' 660 328 342 411
 $openLogsButton = New-Button 'Open server logs' 18 31 145 ([Drawing.Color]::FromArgb(79, 99, 125))
 $openBackupsButton = New-Button 'Open backups' 177 31 145 ([Drawing.Color]::FromArgb(79, 99, 125))
 $advisorButton = New-Button 'Run offline server advisor' 18 86 304 $Green
@@ -1814,15 +1815,16 @@ $importantButton = New-Button 'Important server settings' 18 141 304 $Blue
 $ps5HelpButton = New-Button 'PS5 admin + performance help' 18 196 304 ([Drawing.Color]::FromArgb(117, 92, 190))
 $openConfigButton = New-Button 'Custom crafting costs' 18 251 304 ([Drawing.Color]::FromArgb(79, 99, 125))
 $wildDinoButton = New-Button 'Wild dino settings' 18 306 304 ([Drawing.Color]::FromArgb(46, 150, 145))
-$toolsGroup.Controls.AddRange(@($openLogsButton, $openBackupsButton, $advisorButton, $importantButton, $ps5HelpButton, $openConfigButton, $wildDinoButton))
+$usageAuditButton = New-Button 'AI usage audit' 18 361 304 $Amber
+$toolsGroup.Controls.AddRange(@($openLogsButton, $openBackupsButton, $advisorButton, $importantButton, $ps5HelpButton, $openConfigButton, $wildDinoButton, $usageAuditButton))
 $form.Controls.Add($toolsGroup)
 
-$saveStatus = New-Label 'Latest world save: checking...' 28 702 600 24 $Muted 9
+$saveStatus = New-Label 'Latest world save: checking...' 28 757 600 24 $Muted 9
 $form.Controls.Add($saveStatus)
-$safetyNote = New-Label 'Firewall/router settings are intentionally not controlled here.' 650 702 350 24 $Muted 9
+$safetyNote = New-Label 'Firewall/router settings are intentionally not controlled here.' 650 757 350 24 $Muted 9
 $safetyNote.TextAlign = 'MiddleRight'
 $form.Controls.Add($safetyNote)
-$pendingStatus = New-Label 'Checking for unsaved changes...' 28 733 970 24 $Muted 9
+$pendingStatus = New-Label 'Checking for unsaved changes...' 28 788 970 24 $Muted 9
 $pendingStatus.TextAlign = 'MiddleCenter'
 $form.Controls.Add($pendingStatus)
 
@@ -1871,6 +1873,11 @@ $advisorButton.Add_Click({ Show-ServerAdvisor })
 $importantButton.Add_Click({ Show-ImportantSettingsDialog })
 $wildDinoButton.Add_Click({ Show-WildDinoDialog })
 $ps5HelpButton.Add_Click({ Show-Ps5HelpDialog })
+$usageAuditButton.Add_Click({
+    if (-not (Test-Path -LiteralPath $UsageAuditPs1)) { Show-ErrorBox "Usage audit is missing:`n$UsageAuditPs1"; return }
+    try { & $UsageAuditPs1 -ShowWindow }
+    catch { Show-ErrorBox ('Usage audit failed safely: ' + $_.Exception.Message) }
+})
 $aiAssistantButton.Add_Click({
     $aiPanel = Join-Path $Root 'ASA-AI-Panel.ps1'
     if (-not (Test-Path -LiteralPath $aiPanel)) {
@@ -1892,6 +1899,7 @@ $toolTip.SetToolTip($advisorButton, 'Runs a password-safe, read-only check of AS
 $toolTip.SetToolTip($wildDinoButton, 'Controls wild dino population density, max level, level distribution, per-level toughness, health regen, and loot quality.')
 $toolTip.SetToolTip($aiAssistantButton, 'Opens the local Ollama AI Assistant. It acts immediately on allow-listed settings and server actions (start/stop/restart/update/backup).')
 $toolTip.SetToolTip($guideButton, 'Explains every important ASA server file and opens the selected file or folder directly.')
+$toolTip.SetToolTip($usageAuditButton, 'Records a local before/after credit snapshot and flags repeated scans, tests, or unusually large task activity. It is not billing data or a refund tool.')
 
 $script:BasicSettingsDirty = $false
 $script:LoadingBasicSettings = $false

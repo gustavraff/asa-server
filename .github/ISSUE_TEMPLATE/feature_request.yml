@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a new capability or improvement for the ASA Control Deck, manager scripts, or web manager.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What do you want to be able to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why is this needed?
+      description: What problem does this solve, or what workflow does it improve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: If you have one in mind. Otherwise leave blank.
+    validations:
+      required: false
+
+  - type: input
+    id: affected-files
+    attributes:
+      label: Affected files or feature area
+    validations:
+      required: false
+
+  - type: dropdown
+    id: live-impact
+    attributes:
+      label: Live-system impact
+      options:
+        - "No impact on the live server"
+        - "Requires a live-server restart to take effect"
+        - "Changes server configuration behavior"
+        - "Unknown"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

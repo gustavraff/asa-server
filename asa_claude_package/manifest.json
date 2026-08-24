@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "game": "ARK: Survival Ascended",
+  "platform": "Windows Dedicated Server",
+  "executable": "ArkAscendedServer.exe",
+  "source": "Server_configuration.txt derived from ark.wiki.gg Server configuration",
+  "curation": "ChatGPT curated from DeepSeek extraction; no undocumented source gaps were invented.",
+  "identity_key": [
+    "name",
+    "target",
+    "section"
+  ],
+  "load_policy": {
+    "core": "load by default",
+    "leveling": "load only for level/stat requests",
+    "spawns": "load only for spawn/class requests",
+    "loot_items_engrams": "load only for loot/item/engram requests",
+    "dynamic_config": "load only for explicit dynamic/live requests",
+    "content_niche": "load only for clearly matching niche/map/content requests",
+    "archive_blocked": "never auto-apply; validation/migration reference only"
+  },
+  "safety_rules": [
+    "Unknown settings are rejected.",
+    "unsupported, obsolete and unverified settings are rejected for automatic application.",
+    "Never log secret values.",
+    "AI output never writes INI directly; it must pass structured validation and preview."
+  ],
+  "total_curated_entries": 459,
+  "counts": {
+    "core": 149,
+    "leveling": 10,
+    "spawns": 14,
+    "loot_items_engrams": 9,
+    "dynamic_config": 37,
+    "content_niche": 219,
+    "archive_blocked": 23
+  },
+  "files": {
+    "asa-core-settings.json": "core",
+    "asa-leveling-settings.json": "leveling",
+    "asa-spawn-settings.json": "spawns",
+    "asa-loot-items-engrams-settings.json": "loot_items_engrams",
+    "asa-dynamic-config-settings.json": "dynamic_config",
+    "asa-content-niche-settings.json": "content_niche",
+    "asa-archive-blocked-settings.json": "archive_blocked"
+  }
+}
